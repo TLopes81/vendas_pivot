@@ -1,10 +1,48 @@
+# Dependencies
 node_modules/
+package-lock.json
+yarn.lock
+
+# Environment variables
 .env
-.DS_Store
+.env.local
+.env.*.local
+.env.production.local
+
+# Uploads e arquivos temporários
 uploads/
-pivot.db
+uploads/temp/
+*.xlsx
+*.xls
+
+# Logs
+logs/
 *.log
 npm-debug.log*
-.vercel
+yarn-debug.log*
+yarn-error.log*
+
+# Database
+pivot.db
+*.sqlite
+*.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build
 dist/
 build/
+.next/
+.nuxt/
+coverage/
+
+# Testing
+.nyc_output/
+.coverage
+.jest_cache/

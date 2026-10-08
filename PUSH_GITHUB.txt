@@ -1,0 +1,35 @@
+📤 FAZER PUSH PARA GITHUB
+========================
+
+O projeto já está preparado com git!
+
+PASSO 1: Abra o Prompt de Comando
+
+Navegue até a pasta:
+cd C:\Users\lopes\Documents\Projetos\vendas_pivot
+
+PASSO 2: Digite este comando:
+
+git remote add origin https://github.com/TLopes81/vendas_pivot.git
+
+PASSO 3: Faça o push:
+
+git push -u origin main
+
+PASSO 4: Quando pedir credenciais:
+
+Username: TLopes81
+Password: [sua senha do GitHub]
+
+OU se tiver Personal Access Token:
+Username: TLopes81
+Password: [seu token]
+
+PRONTO! ✨
+
+Seu código estará em:
+https://github.com/TLopes81/vendas_pivot
+
+---
+
+PRÓXIMO PASSO: Deploy no Vercel!

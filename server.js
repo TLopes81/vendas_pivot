@@ -1,303 +1,611 @@
-import express from 'express';
-import cors from 'cors';
-import multer from 'multer';
-import sqlite3 from 'sqlite3';
-import { v4 as uuidv4 } from 'uuid';
-import moment from 'moment';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+// ============================================
+// PIVOT Deal Manager - Backend Seguro
+// Tech Lead Implementation
+// ============================================
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const express = require('express');
+const cors = require('cors');
+const multer = require('multer');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
+const rateLimit = require('express-rate-limit');
+const Joi = require('joi');
+const winston = require('winston');
+const { createClient } = require('@supabase/supabase-js');
+const { v4: uuidv4 } = require('uuid');
+const path = require('path');
+const fs = require('fs');
+
+// ============================================
+// CONFIGURAÇÃO SEGURA
+// ============================================
+
 const app = express();
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// Logger estruturado (Winston)
+const logger = winston.createLogger({
+  format: winston.format.json(),
+  defaultMeta: { service: 'pivot-backend' },
+  transports: [
+    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'logs/combined.log' }),
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.simple()
+      )
+    })
+  ]
+});
 
-// Upload de arquivos
-const upload = multer({ dest: 'uploads/' });
-if (!fs.existsSync('uploads')) {
-  fs.mkdirSync('uploads');
+// Criar pasta de logs se não existir
+if (!fs.existsSync('logs')) {
+  fs.mkdirSync('logs');
 }
 
-// Banco de dados
-const db = new sqlite3.Database('pivot.db', (err) => {
-  if (err) console.error('Erro ao conectar:', err);
-  else console.log('✅ Banco de dados conectado');
+// ============================================
+// SUPABASE INIT
+// ============================================
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
+
+// ============================================
+// SEGURANÇA: CORS RESTRITIVO
+// ============================================
+
+const allowedOrigins = [
+  'https://vendaspivot.com',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  process.env.FRONTEND_URL
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      logger.warn('CORS bloqueado', { origin });
+      callback(new Error('CORS policy violation'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// ============================================
+// MIDDLEWARE SEGURANÇA
+// ============================================
+
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ limit: '1mb', extended: true }));
+
+// Rate limiting global
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  message: 'Muitas requisições, aguarde um pouco',
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use(globalLimiter);
+
+// Rate limiting específico para login
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: 'Muitas tentativas de login, aguarde 15 minutos',
+  skipSuccessfulRequests: true
 });
 
-// Criar tabelas
-const criarTabelas = () => {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS usuarios (
-      id TEXT PRIMARY KEY,
-      nome TEXT,
-      email TEXT UNIQUE,
-      senha TEXT,
-      nivel TEXT,
-      gerente_id TEXT,
-      ativo BOOLEAN DEFAULT 1
-    )
-  `);
+// ============================================
+// MULTER - UPLOAD SEGURO
+// ============================================
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS projetos (
-      id TEXT PRIMARY KEY,
-      cliente TEXT,
-      fazenda TEXT,
-      vendedor_id TEXT,
-      gerente_id TEXT,
-      diretor_id TEXT,
-      status TEXT,
-      valor REAL,
-      desconto REAL,
-      margem REAL,
-      data_criacao TEXT,
-      observacoes TEXT
-    )
-  `);
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = 'uploads/temp';
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const sanitized = file.originalname
+      .replace(/[^a-zA-Z0-9.-]/g, '_')
+      .slice(0, 50);
+    cb(null, `${Date.now()}-${uuidv4()}-${sanitized}`);
+  }
+});
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS arquivos (
-      id TEXT PRIMARY KEY,
-      projeto_id TEXT,
-      nome TEXT,
-      versao INTEGER,
-      data_upload TEXT,
-      tamanho INTEGER,
-      caminho TEXT,
-      FOREIGN KEY(projeto_id) REFERENCES projetos(id)
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS aprovacoes (
-      id TEXT PRIMARY KEY,
-      projeto_id TEXT,
-      usuario_id TEXT,
-      status TEXT,
-      comentario TEXT,
-      data TEXT,
-      FOREIGN KEY(projeto_id) REFERENCES projetos(id)
-    )
-  `);
+const fileFilter = (req, file, cb) => {
+  const allowedMimes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
+  const allowedExtensions = ['.xlsx'];
+  const ext = path.extname(file.originalname).toLowerCase();
+  
+  if (allowedMimes.includes(file.mimetype) && allowedExtensions.includes(ext)) {
+    cb(null, true);
+  } else {
+    logger.warn('Upload bloqueado - tipo inválido', {
+      user: req.userId,
+      mimetype: file.mimetype,
+      originalname: file.originalname
+    });
+    cb(new Error('Apenas arquivos .xlsx são permitidos'));
+  }
 };
 
-criarTabelas();
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024
+  }
+});
 
-// ==================== AUTENTICAÇÃO ====================
+// ============================================
+// VALIDAÇÃO COM JOI
+// ============================================
 
-app.post('/api/login', (req, res) => {
-  const { email, senha } = req.body;
+const schemas = {
+  login: Joi.object({
+    email: Joi.string().email().required().messages({
+      'string.email': 'Email inválido',
+      'any.required': 'Email é obrigatório'
+    }),
+    senha: Joi.string().min(6).required().messages({
+      'string.min': 'Senha deve ter no mínimo 6 caracteres',
+      'any.required': 'Senha é obrigatória'
+    })
+  }),
 
-  db.get(
-    'SELECT * FROM usuarios WHERE email = ? AND senha = ? AND ativo = 1',
-    [email, senha],
-    (err, usuario) => {
-      if (err || !usuario) {
-        return res.status(401).json({ erro: 'Credenciais inválidas' });
-      }
+  projeto: Joi.object({
+    cliente: Joi.string().max(100).required(),
+    fazenda: Joi.string().max(100).required(),
+    valor: Joi.number().positive().precision(2),
+    desconto: Joi.number().min(0).max(100),
+    observacoes: Joi.string().max(500)
+  }),
 
-      res.json({
-        id: usuario.id,
-        nome: usuario.nome,
-        email: usuario.email,
-        nivel: usuario.nivel,
-        gerente_id: usuario.gerente_id
+  upload: Joi.object({
+    projeto_id: Joi.string().required()
+  })
+};
+
+// ============================================
+// AUTENTICAÇÃO JWT
+// ============================================
+
+const JWT_SECRET = process.env.JWT_SECRET || 'seu-secret-aqui-MUDE-ISSO';
+const JWT_EXPIRY = '15m';
+const REFRESH_TOKEN_EXPIRY = '7d';
+
+const generateTokens = (userId) => {
+  const token = jwt.sign(
+    { userId, type: 'access' },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRY }
+  );
+
+  const refreshToken = jwt.sign(
+    { userId, type: 'refresh' },
+    JWT_SECRET,
+    { expiresIn: REFRESH_TOKEN_EXPIRY }
+  );
+
+  return { token, refreshToken };
+};
+
+// Middleware: verificar JWT
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    logger.warn('Acesso negado - sem token', { ip: req.ip });
+    return res.status(401).json({ error: 'Token não fornecido' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) {
+      logger.warn('Token inválido', { ip: req.ip, error: err.message });
+      return res.status(403).json({ error: 'Token inválido' });
+    }
+
+    req.userId = decoded.userId;
+    next();
+  });
+};
+
+// ============================================
+// ROTAS: AUTENTICAÇÃO
+// ============================================
+
+app.post('/login', loginLimiter, async (req, res) => {
+  try {
+    const { error, value } = schemas.login.validate(req.body);
+    if (error) {
+      logger.warn('Validação falhou no login', { 
+        error: error.details[0].message,
+        email: req.body.email 
       });
+      return res.status(400).json({ error: error.details[0].message });
     }
-  );
-});
 
-// ==================== CRIAR USUÁRIOS (SETUP INICIAL) ====================
+    const { email, senha } = value;
 
-app.post('/api/usuarios/setup', (req, res) => {
-  const usuarios = [
-    { id: 'silvio', nome: 'Silvio', email: 'silvio@pivot.com', senha: '123456', nivel: 'diretor', gerente_id: null },
-    { id: 'tiago', nome: 'Tiago Lopes', email: 'tiago@pivot.com', senha: '123456', nivel: 'gerente', gerente_id: null },
-    { id: 'joao', nome: 'João Batista', email: 'joao@pivot.com', senha: '123456', nivel: 'gerente', gerente_id: null },
-    // 8 Vendedores (Tiago)
-    { id: 'v1', nome: 'Vendedor 1 (Tiago)', email: 'v1@pivot.com', senha: '123456', nivel: 'vendedor', gerente_id: 'tiago' },
-    { id: 'v2', nome: 'Vendedor 2 (Tiago)', email: 'v2@pivot.com', senha: '123456', nivel: 'vendedor', gerente_id: 'tiago' },
-    { id: 'v3', nome: 'Vendedor 3 (Tiago)', email: 'v3@pivot.com', senha: '123456', nivel: 'vendedor', gerente_id: 'tiago' },
-    { id: 'v4', nome: 'Vendedor 4 (Tiago)', email: 'v4@pivot.com', senha: '123456', nivel: 'vendedor', gerente_id: 'tiago' },
-    { id: 'v5', nome: 'Vendedor 5 (Tiago)', email: 'v5@pivot.com', senha: '123456', nivel: 'vendedor', gerente_id: 'tiago' },
-    { id: 'v6', nome: 'Vendedor 6 (Tiago)', email: 'v6@pivot.com', senha: '123456', nivel: 'vendedor', gerente_id: 'tiago' },
-    { id: 'v7', nome: 'Vendedor 7 (Tiago)', email: 'v7@pivot.com', senha: '123456', nivel: 'vendedor', gerente_id: 'tiago' },
-    { id: 'v8', nome: 'Vendedor 8 (Tiago)', email: 'v8@pivot.com', senha: '123456', nivel: 'vendedor', gerente_id: 'tiago' },
-    // 4 Vendedores (João)
-    { id: 'v9', nome: 'Vendedor 1 (João)', email: 'v9@pivot.com', senha: '123456', nivel: 'vendedor', gerente_id: 'joao' },
-    { id: 'v10', nome: 'Vendedor 2 (João)', email: 'v10@pivot.com', senha: '123456', nivel: 'vendedor', gerente_id: 'joao' },
-    { id: 'v11', nome: 'Vendedor 3 (João)', email: 'v11@pivot.com', senha: '123456', nivel: 'vendedor', gerente_id: 'joao' },
-    { id: 'v12', nome: 'Vendedor 4 (João)', email: 'v12@pivot.com', senha: '123456', nivel: 'vendedor', gerente_id: 'joao' }
-  ];
+    const { data: usuarios, error: dbError } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('email', email)
+      .single();
 
-  usuarios.forEach(u => {
-    db.run(
-      'INSERT OR IGNORE INTO usuarios (id, nome, email, senha, nivel, gerente_id) VALUES (?, ?, ?, ?, ?, ?)',
-      [u.id, u.nome, u.email, u.senha, u.nivel, u.gerente_id]
-    );
-  });
-
-  res.json({ mensagem: 'Usuários criados com sucesso!' });
-});
-
-// ==================== PROJETOS ====================
-
-app.post('/api/projetos', (req, res) => {
-  const { cliente, fazenda, vendedor_id, gerente_id, observacoes } = req.body;
-  const id = uuidv4();
-  const data_criacao = moment().format('YYYY-MM-DD HH:mm:ss');
-
-  db.run(
-    `INSERT INTO projetos (id, cliente, fazenda, vendedor_id, gerente_id, diretor_id, status, data_criacao, observacoes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, cliente, fazenda, vendedor_id, gerente_id, 'silvio', 'em_negociacao', data_criacao, observacoes],
-    (err) => {
-      if (err) return res.status(400).json({ erro: err.message });
-      res.json({ id, mensagem: 'Projeto criado com sucesso!' });
+    if (dbError || !usuarios) {
+      logger.warn('Login falhou - usuário não encontrado', { email });
+      return res.status(401).json({ error: 'Email ou senha incorretos' });
     }
-  );
-});
 
-// Listar projetos (com permissões)
-app.get('/api/projetos/:usuario_id/:nivel', (req, res) => {
-  const { usuario_id, nivel } = req.params;
+    const senhaValida = await bcrypt.compare(senha, usuarios.senha);
 
-  let query = 'SELECT * FROM projetos';
-  let params = [];
-
-  if (nivel === 'vendedor') {
-    query += ' WHERE vendedor_id = ?';
-    params.push(usuario_id);
-  } else if (nivel === 'gerente') {
-    query += ' WHERE gerente_id = ?';
-    params.push(usuario_id);
-  }
-  // Diretor vê TUDO (sem WHERE)
-
-  db.all(query, params, (err, projetos) => {
-    if (err) return res.status(400).json({ erro: err.message });
-    res.json(projetos || []);
-  });
-});
-
-// ==================== UPLOAD DE ARQUIVOS ====================
-
-app.post('/api/arquivos/:projeto_id', upload.single('arquivo'), (req, res) => {
-  const { projeto_id } = req.params;
-
-  if (!req.file) {
-    return res.status(400).json({ erro: 'Nenhum arquivo fornecido' });
-  }
-
-  const id = uuidv4();
-  const nome = req.file.originalname;
-  const caminho = req.file.path;
-  const tamanho = req.file.size;
-  const data_upload = moment().format('YYYY-MM-DD HH:mm:ss');
-
-  // Obter versão
-  db.get(
-    'SELECT COUNT(*) as count FROM arquivos WHERE projeto_id = ?',
-    [projeto_id],
-    (err, row) => {
-      const versao = (row?.count || 0) + 1;
-
-      db.run(
-        `INSERT INTO arquivos (id, projeto_id, nome, versao, data_upload, tamanho, caminho)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, projeto_id, nome, versao, data_upload, tamanho, caminho],
-        (err) => {
-          if (err) return res.status(400).json({ erro: err.message });
-          res.json({
-            id,
-            versao,
-            nome: `v${versao}_${data_upload.split(' ')[0]}_${nome}`,
-            data_upload,
-            tamanho
-          });
-        }
-      );
+    if (!senhaValida) {
+      logger.warn('Login falhou - senha incorreta', { email });
+      return res.status(401).json({ error: 'Email ou senha incorretos' });
     }
-  );
-});
 
-// Listar arquivos de um projeto
-app.get('/api/arquivos/:projeto_id', (req, res) => {
-  const { projeto_id } = req.params;
-
-  db.all(
-    'SELECT * FROM arquivos WHERE projeto_id = ? ORDER BY versao DESC',
-    [projeto_id],
-    (err, arquivos) => {
-      if (err) return res.status(400).json({ erro: err.message });
-      res.json(arquivos || []);
+    if (!usuarios.ativo) {
+      logger.warn('Login falhou - usuário inativo', { email });
+      return res.status(403).json({ error: 'Usuário inativo' });
     }
-  );
-});
 
-// ==================== APROVAÇÕES ====================
+    const { token, refreshToken } = generateTokens(usuarios.id);
 
-app.post('/api/aprovacoes', (req, res) => {
-  const { projeto_id, usuario_id, status, comentario } = req.body;
-  const id = uuidv4();
-  const data = moment().format('YYYY-MM-DD HH:mm:ss');
-
-  db.run(
-    `INSERT INTO aprovacoes (id, projeto_id, usuario_id, status, comentario, data)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [id, projeto_id, usuario_id, status, comentario, data],
-    (err) => {
-      if (err) return res.status(400).json({ erro: err.message });
-      res.json({ id, mensagem: 'Aprovação registrada!' });
-    }
-  );
-});
-
-// ==================== DASHBOARD ====================
-
-app.get('/api/dashboard/:usuario_id/:nivel', (req, res) => {
-  const { usuario_id, nivel } = req.params;
-
-  let query = 'SELECT * FROM projetos';
-  let params = [];
-
-  if (nivel === 'vendedor') {
-    query += ' WHERE vendedor_id = ?';
-    params.push(usuario_id);
-  } else if (nivel === 'gerente') {
-    query += ' WHERE gerente_id = ?';
-    params.push(usuario_id);
-  }
-
-  db.all(query, params, (err, projetos) => {
-    if (err) return res.status(400).json({ erro: err.message });
-
-    const total = projetos.length;
-    const em_negociacao = projetos.filter(p => p.status === 'em_negociacao').length;
-    const aprovados = projetos.filter(p => p.status === 'aprovado').length;
-    const valor_total = projetos.reduce((sum, p) => sum + (p.valor || 0), 0);
-    const margem_media = projetos.length > 0
-      ? (projetos.reduce((sum, p) => sum + (p.margem || 0), 0) / projetos.length).toFixed(2)
-      : 0;
+    logger.info('Login bem-sucedido', {
+      userId: usuarios.id,
+      email: usuarios.email,
+      nivel: usuarios.nivel
+    });
 
     res.json({
-      total,
-      em_negociacao,
-      aprovados,
-      valor_total,
-      margem_media,
+      token,
+      refreshToken,
+      usuario: {
+        id: usuarios.id,
+        nome: usuarios.nome,
+        email: usuarios.email,
+        nivel: usuarios.nivel
+      }
+    });
+
+  } catch (err) {
+    logger.error('Erro no login', { error: err.message });
+    res.status(500).json({ error: 'Erro ao fazer login' });
+  }
+});
+
+app.post('/refresh-token', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(401).json({ error: 'Refresh token não fornecido' });
+    }
+
+    jwt.verify(refreshToken, JWT_SECRET, (err, decoded) => {
+      if (err) {
+        logger.warn('Refresh token inválido', { error: err.message });
+        return res.status(403).json({ error: 'Refresh token expirado' });
+      }
+
+      const { token: newToken, refreshToken: newRefreshToken } = generateTokens(decoded.userId);
+
+      res.json({
+        token: newToken,
+        refreshToken: newRefreshToken
+      });
+    });
+
+  } catch (err) {
+    logger.error('Erro ao refreshar token', { error: err.message });
+    res.status(500).json({ error: 'Erro ao refreshar token' });
+  }
+});
+
+// ============================================
+// ROTAS: PROJETOS
+// ============================================
+
+app.get('/projetos', authenticateToken, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = 20;
+    const offset = (page - 1) * limit;
+
+    const { data: usuario } = await supabase
+      .from('usuarios')
+      .select('nivel, gerente_id')
+      .eq('id', req.userId)
+      .single();
+
+    if (!usuario) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    let query = supabase
+      .from('projetos')
+      .select('id, cliente, fazenda, status, valor, margem, data_criacao', { count: 'exact' });
+
+    if (usuario.nivel === 'diretor') {
+      // Diretor vê tudo
+    } else if (usuario.nivel === 'gerente') {
+      query = query.eq('gerente_id', req.userId);
+    } else {
+      query = query.eq('vendedor_id', req.userId);
+    }
+
+    const { data, count, error } = await query
+      .order('data_criacao', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    logger.info('Projetos listados', {
+      userId: req.userId,
+      count: count,
+      page: page
+    });
+
+    res.json({
+      data,
+      totalPages: Math.ceil(count / limit),
+      currentPage: page,
+      total: count
+    });
+
+  } catch (err) {
+    logger.error('Erro ao listar projetos', { error: err.message, userId: req.userId });
+    res.status(500).json({ error: 'Erro ao listar projetos' });
+  }
+});
+
+// ============================================
+// ROTAS: UPLOAD DE ARQUIVOS
+// ============================================
+
+app.post('/arquivos/upload', authenticateToken, upload.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Nenhum arquivo foi enviado' });
+    }
+
+    const { error, value } = schemas.upload.validate(req.body);
+    if (error) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: error.details[0].message });
+    }
+
+    const { projeto_id } = value;
+
+    const { data: projeto } = await supabase
+      .from('projetos')
+      .select('*')
+      .eq('id', projeto_id)
+      .single();
+
+    if (!projeto) {
+      fs.unlinkSync(req.file.path);
+      return res.status(404).json({ error: 'Projeto não encontrado' });
+    }
+
+    if (projeto.vendedor_id !== req.userId && projeto.gerente_id !== req.userId) {
+      fs.unlinkSync(req.file.path);
+      logger.warn('Upload bloqueado - sem permissão', {
+        userId: req.userId,
+        projeto_id
+      });
+      return res.status(403).json({ error: 'Sem permissão para este projeto' });
+    }
+
+    const { data: arquivos, error: countError } = await supabase
+      .from('arquivos')
+      .select('versao')
+      .eq('projeto_id', projeto_id)
+      .order('versao', { ascending: false })
+      .limit(1);
+
+    if (countError) throw countError;
+
+    const proximaVersao = arquivos.length > 0 ? arquivos[0].versao + 1 : 1;
+
+    const { data: arquivo, error: insertError } = await supabase
+      .from('arquivos')
+      .insert([{
+        id: uuidv4(),
+        projeto_id,
+        nome: req.file.originalname,
+        versao: proximaVersao,
+        tamanho: req.file.size,
+        url: `/uploads/${req.file.filename}`,
+        caminho: req.file.path,
+        uploaded_by: req.userId,
+        data_upload: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (insertError) throw insertError;
+
+    logger.info('Arquivo uploadado com sucesso', {
+      userId: req.userId,
+      projeto_id,
+      arquivo: req.file.originalname,
+      versao: proximaVersao,
+      tamanho: req.file.size
+    });
+
+    res.json({
+      message: 'Upload realizado com sucesso',
+      arquivo: {
+        id: arquivo.id,
+        versao: arquivo.versao,
+        nome: arquivo.nome,
+        tamanho: arquivo.tamanho,
+        dataUpload: arquivo.data_upload
+      }
+    });
+
+  } catch (err) {
+    if (req.file) {
+      fs.unlinkSync(req.file.path);
+    }
+    logger.error('Erro ao fazer upload', { error: err.message, userId: req.userId });
+    res.status(500).json({ error: 'Erro ao fazer upload' });
+  }
+});
+
+// ============================================
+// ROTAS: DASHBOARD
+// ============================================
+
+app.get('/dashboard', authenticateToken, async (req, res) => {
+  try {
+    const { data: usuario } = await supabase
+      .from('usuarios')
+      .select('nivel')
+      .eq('id', req.userId)
+      .single();
+
+    if (!usuario) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    let query = supabase.from('projetos').select('*');
+
+    if (usuario.nivel === 'vendedor') {
+      query = query.eq('vendedor_id', req.userId);
+    } else if (usuario.nivel === 'gerente') {
+      query = query.eq('gerente_id', req.userId);
+    }
+
+    const { data: projetos, error } = await query;
+
+    if (error) throw error;
+
+    const totalProjetos = projetos.length;
+    const emNegociacao = projetos.filter(p => p.status === 'em_negociacao').length;
+    const aprovados = projetos.filter(p => p.status === 'aprovado').length;
+    const perdidos = projetos.filter(p => p.status === 'perdido').length;
+
+    const valorTotal = projetos.reduce((sum, p) => sum + (p.valor || 0), 0);
+    const margensValidas = projetos.filter(p => p.margem).map(p => p.margem);
+    const margemMedia = margensValidas.length > 0
+      ? margensValidas.reduce((a, b) => a + b) / margensValidas.length
+      : 0;
+
+    logger.info('Dashboard acessado', {
+      userId: req.userId,
+      totalProjetos,
+      nivel: usuario.nivel
+    });
+
+    res.json({
+      kpis: {
+        totalProjetos,
+        emNegociacao,
+        aprovados,
+        perdidos,
+        valorTotal: parseFloat(valorTotal.toFixed(2)),
+        margemMedia: parseFloat(margemMedia.toFixed(2))
+      },
       projetos
     });
+
+  } catch (err) {
+    logger.error('Erro ao carregar dashboard', { error: err.message, userId: req.userId });
+    res.status(500).json({ error: 'Erro ao carregar dashboard' });
+  }
+});
+
+// ============================================
+// HEALTH CHECK
+// ============================================
+
+app.get('/health', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('usuarios')
+      .select('id')
+      .limit(1);
+
+    if (error) throw error;
+
+    res.status(200).json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      database: 'connected'
+    });
+  } catch (err) {
+    logger.error('Health check falhou', { error: err.message });
+    res.status(503).json({
+      status: 'error',
+      message: 'Database connection failed',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// ============================================
+// ERROR HANDLING GLOBAL
+// ============================================
+
+app.use((err, req, res, next) => {
+  logger.error('Erro não tratado', {
+    error: err.message,
+    stack: err.stack,
+    path: req.path,
+    method: req.method,
+    userId: req.userId
+  });
+
+  if (err.message.includes('CORS')) {
+    return res.status(403).json({ error: 'CORS policy violation' });
+  }
+
+  if (err.message === 'Apenas arquivos .xlsx são permitidos') {
+    return res.status(400).json({ error: err.message });
+  }
+
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({ error: 'Arquivo muito grande (máximo 5MB)' });
+  }
+
+  res.status(500).json({
+    error: 'Erro interno do servidor',
+    message: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
 
-// ==================== INICIAR SERVIDOR ====================
+// ============================================
+// 404 HANDLER
+// ============================================
+
+app.use((req, res) => {
+  logger.warn('Rota não encontrada', { path: req.path, method: req.method });
+  res.status(404).json({ error: 'Rota não encontrada' });
+});
+
+// ============================================
+// INICIAR SERVIDOR
+// ============================================
 
 const PORT = process.env.PORT || 3001;
+
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
-  console.log(`📊 Acesse: http://localhost:3000`);
+  logger.info(`Servidor iniciado na porta ${PORT}`);
+  logger.info(`Ambiente: ${process.env.NODE_ENV || 'development'}`);
 });
+
+module.exports = app;
