@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PIVOT Deal Manager WEB</title>
+<style>
+  :root { --azul:#0b2545; --azul2:#006591; --cinza:#f4f7fb; --borda:#dbe4ec; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--cinza); color:#171c20; }
+  .login-wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .card { background:#fff; border:1px solid var(--borda); border-radius:14px; padding:28px; width:100%; max-width:380px; box-shadow:0 8px 24px rgba(11,37,69,.06); }
+  .card h1 { margin:0 0 4px; font-size:20px; }
+  .card p.sub { margin:0 0 20px; font-size:12px; color:#5c6b78; }
+  label { display:block; font-size:12px; font-weight:600; margin:12px 0 4px; }
+  input, select { width:100%; height:42px; border:1px solid var(--borda); border-radius:9px; padding:0 12px; font-size:14px; background:#fbfdff; }
+  button { height:42px; border:0; border-radius:9px; background:var(--azul2); color:#fff; font-weight:600; font-size:14px; cursor:pointer; padding:0 16px; }
+  button.ghost { background:#fff; color:var(--azul2); border:1px solid var(--azul2); }
+  button.mini { height:30px; font-size:12px; padding:0 10px; }
+  button:disabled { opacity:.6; cursor:not-allowed; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .err { background:#fff1f2; border:1px solid #fecdd3; color:#9f1239; padding:10px; border-radius:9px; font-size:12px; margin-top:14px; }
+  .ok { background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46; padding:10px; border-radius:9px; font-size:12px; margin-top:14px; }
+  header { background:var(--azul); color:#fff; padding:14px 22px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; }
+  header .who { font-size:12px; opacity:.85; }
+  main { padding:22px; max-width:1200px; margin:0 auto; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:20px; }
+  .kpi { background:#fff; border:1px solid var(--borda); border-radius:12px; padding:14px; }
+  .kpi span { display:block; font-size:11px; text-transform:uppercase; color:#6b7a82; letter-spacing:.03em; }
+  .kpi strong { font-size:22px; }
+  table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--borda); border-radius:12px; overflow:hidden; }
+  th, td { text-align:left; padding:10px 12px; font-size:13px; border-bottom:1px solid #eef3f7; }
+  th { background:#f8fbfe; font-size:11px; text-transform:uppercase; color:#6b7a82; }
+  .tag { font-size:11px; padding:3px 8px; border-radius:999px; font-weight:600; }
+  .tag.em_negociacao { background:#fff5e0; color:#8c520a; }
+  .tag.aprovado { background:#ecfdf5; color:#065f46; }
+  .tag.reprovado { background:#fff1f2; color:#9f1239; }
+  .panel { background:#fff; border:1px solid var(--borda); border-radius:12px; padding:16px; margin-bottom:18px; }
+  .panel h2 { margin:0 0 12px; font-size:15px; }
+  .muted { font-size:12px; color:#6b7a82; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+const API = '';
+
+function api(path, options, token) {
+  const opts = options || {};
+  const headers = Object.assign({}, opts.headers || {});
+  if (!(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  return fetch(API + path, Object.assign({}, opts, { headers: headers })).then(function (r) {
+    return r.text().then(function (t) {
+      let data = null;
+      try { data = t ? JSON.parse(t) : null; } catch (e) { data = { erro: t }; }
+      if (!r.ok) throw new Error((data && data.erro) || ('Falha HTTP ' + r.status));
+      return data;
+    });
+  });
+}
+function brl(v) {
+  return (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function Login(props) {
+  const [email, setEmail] = useState('silvio@pivot.com');
+  const [senha, setSenha] = useState('123456');
+  const [erro, setErro] = useState(null);
+  const [carregando, setCarregando] = useState(false);
+
+  function entrar(e) {
+    e.preventDefault();
+    setErro(null); setCarregando(true);
+    api('/login', { method: 'POST', body: JSON.stringify({ email: email, senha: senha }) })
+      .then(function (d) { props.onLogin(d.token, d.usuario); })
+      .catch(function (err) { setErro(err.message); })
+      .then(function () { setCarregando(false); });
+  }
+
+  return (
+    <div className="login-wrap">
+      <form className="card" onSubmit={entrar}>
+        <h1>PIVOT Deal Manager</h1>
+        <p className="sub">Hierarquia: diretor &gt; gerente &gt; vendedor</p>
+        <label>E-mail</label>
+        <input type="email" value={email} onChange={function (e) { setEmail(e.target.value); }} required />
+        <label>Senha</label>
+        <input type="password" value={senha} onChange={function (e) { setSenha(e.target.value); }} required />
+        <div style={{ height: '16px' }} />
+        <button type="submit" style={{ width: '100%' }} disabled={carregando}>
+          {carregando ? 'Entrando...' : 'Entrar'}
+        </button>
+        {erro ? <div className="err">{erro}</div> : null}
+        <p className="muted" style={{ marginTop: '14px' }}>
+          Diretor: silvio@pivot.com &nbsp;|&nbsp; Gerentes: marta@ / roberto@pivot.com &nbsp;|&nbsp; Vendedores: ana@, bruno@, carla@, diego@, elisa@, fabio@, gisele@, heitor@, iris@, joao@pivot.com
+          <br />Senha de todos: 123456
+        </p>
+      </form>
+    </div>
+  );
+}
+
+function NovoProjeto(props) {
+  const [cliente, setCliente] = useState('');
+  const [valor, setValor] = useState('');
+  const [custo, setCusto] = useState('');
+  const [msg, setMsg] = useState(null);
+
+  function salvar(e) {
+    e.preventDefault();
+    api('/projetos', { method: 'POST', body: JSON.stringify({ cliente: cliente, valor: valor, custo: custo }) }, props.token)
+      .then(function () { setMsg('Projeto criado.'); setCliente(''); setValor(''); setCusto(''); props.onChange(); })
+      .catch(function (err) { setMsg('Erro: ' + err.message); });
+  }
+  return (
+    <div className="panel">
+      <h2>Novo projeto</h2>
+      <form onSubmit={salvar} className="row">
+        <input placeholder="Cliente" value={cliente} onChange={function (e) { setCliente(e.target.value); }} required style={{ maxWidth: '240px' }} />
+        <input placeholder="Valor" value={valor} onChange={function (e) { setValor(e.target.value); }} style={{ maxWidth: '120px' }} />
+        <input placeholder="Custo" value={custo} onChange={function (e) { setCusto(e.target.value); }} style={{ maxWidth: '120px' }} />
+        <button type="submit">Criar</button>
+        {msg ? <span className="muted">{msg}</span> : null}
+      </form>
+    </div>
+  );
+}
+
+function Dashboard(props) {
+  const [kpis, setKpis] = useState(null);
+  const [escopo, setEscopo] = useState('');
+  const [projetos, setProjetos] = useState([]);
+  const [usuarios, setUsuarios] = useState([]);
+  const [erro, setErro] = useState(null);
+
+  const carregar = useCallback(function () {
+    api('/dashboard', {}, props.token).then(function (d) { setKpis(d.kpis); setEscopo(d.escopo); }).catch(function (e) { setErro(e.message); });
+    api('/projetos', {}, props.token).then(setProjetos).catch(function (e) { setErro(e.message); });
+    api('/usuarios', {}, props.token).then(setUsuarios).catch(function () { setUsuarios([]); });
+  }, [props.token]);
+
+  useEffect(function () { carregar(); }, [carregar]);
+
+  function decidir(id, decisao) {
+    api('/aprovacoes', { method: 'POST', body: JSON.stringify({ projeto_id: id, decisao: decisao, comentario: 'Avaliado na tela' }) }, props.token)
+      .then(carregar).catch(function (e) { setErro(e.message); });
+  }
+  function excluir(id) {
+    api('/projetos/' + id, { method: 'DELETE' }, props.token).then(carregar).catch(function (e) { setErro(e.message); });
+  }
+
+  const podeCriar = true;
+  const podeAprovar = props.usuario.nivel === 'gerente' || props.usuario.nivel === 'diretor';
+
+  return (
+    <div>
+      <header>
+        <div>
+          <strong>PIVOT Deal Manager WEB</strong>
+          <div className="who">{props.usuario.nome} &middot; {props.usuario.email} &middot; nivel: {props.usuario.nivel} &middot; escopo: {escopo || '-'}</div>
+        </div>
+        <button className="ghost" onClick={props.onLogout}>Sair</button>
+      </header>
+      <main>
+        {erro ? <div className="err">{erro}</div> : null}
+        <div className="kpis">
+          <div className="kpi"><span>Total de projetos</span><strong>{kpis ? kpis.total : '-'}</strong></div>
+          <div className="kpi"><span>Em negociacao</span><strong>{kpis ? kpis.em_negociacao : '-'}</strong></div>
+          <div className="kpi"><span>Aprovados</span><strong>{kpis ? kpis.aprovados : '-'}</strong></div>
+          <div className="kpi"><span>Valor total</span><strong>{kpis ? brl(kpis.valor_total) : '-'}</strong></div>
+          <div className="kpi"><span>Margem media</span><strong>{kpis ? kpis.margem_media + '%' : '-'}</strong></div>
+        </div>
+
+        {podeCriar ? <NovoProjeto token={props.token} onChange={carregar} /> : null}
+
+        <div className="panel">
+          <h2>Projetos ({projetos.length})</h2>
+          <table>
+            <thead>
+              <tr><th>Cliente</th><th>Vendedor</th><th>Valor</th><th>Custo</th><th>Status</th>{podeAprovar ? <th>Acoes</th> : null}</tr>
+            </thead>
+            <tbody>
+              {projetos.map(function (p) {
+                return (
+                  <tr key={p.id}>
+                    <td>{p.cliente}</td>
+                    <td>{p.vendedor_nome || '-'}</td>
+                    <td>{brl(p.valor)}</td>
+                    <td>{brl(p.custo)}</td>
+                    <td><span className={'tag ' + p.status}>{p.status}</span></td>
+                    {podeAprovar ? (
+                      <td>
+                        <div className="row">
+                          <button className="mini" onClick={function () { decidir(p.id, 'aprovado'); }}>Aprovar</button>
+                          <button className="mini ghost" onClick={function () { decidir(p.id, 'reprovado'); }}>Reprovar</button>
+                          {props.usuario.nivel === 'diretor' ? <button className="mini ghost" onClick={function () { excluir(p.id); }}>Excluir</button> : null}
+                        </div>
+                      </td>
+                    ) : null}
+                  </tr>
+                );
+              })}
+              {projetos.length === 0 ? <tr><td colSpan={podeAprovar ? 6 : 5} className="muted">Nenhum projeto no seu escopo.</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
+
+        {usuarios.length > 0 ? (
+          <div className="panel">
+            <h2>Usuarios no seu escopo ({usuarios.length})</h2>
+            <table>
+              <thead><tr><th>Nome</th><th>E-mail</th><th>Nivel</th></tr></thead>
+              <tbody>
+                {usuarios.map(function (u) {
+                  return <tr key={u.id}><td>{u.nome}</td><td>{u.email}</td><td>{u.nivel}</td></tr>;
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </main>
+    </div>
+  );
+}
+
+function App() {
+  const [token, setToken] = useState(null);
+  const [usuario, setUsuario] = useState(null);
+
+  useEffect(function () {
+    const t = localStorage.getItem('pivot_token');
+    const u = localStorage.getItem('pivot_usuario');
+    if (t && u) { setToken(t); setUsuario(JSON.parse(u)); }
+  }, []);
+
+  function onLogin(t, u) {
+    localStorage.setItem('pivot_token', t);
+    localStorage.setItem('pivot_usuario', JSON.stringify(u));
+    setToken(t); setUsuario(u);
+  }
+  function onLogout() {
+    if (token) api('/logout', { method: 'POST' }, token).catch(function () {});
+    localStorage.removeItem('pivot_token');
+    localStorage.removeItem('pivot_usuario');
+    setToken(null); setUsuario(null);
+  }
+
+  if (!token || !usuario) return <Login onLogin={onLogin} />;
+  return <Dashboard token={token} usuario={usuario} onLogout={onLogout} />;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
