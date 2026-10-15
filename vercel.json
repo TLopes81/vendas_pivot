@@ -1,0 +1,10 @@
+{
+  "rewrites": [
+    { "source": "/api/auth", "destination": "/api/auth" },
+    { "source": "/login", "destination": "/public/login.html" },
+    { "source": "/dashboard", "destination": "/public/dashboard.html" },
+    { "source": "/arquivos", "destination": "/public/arquivos.html" },
+    { "source": "/orcamento", "destination": "/public/orcamento.html" },
+    { "source": "/", "destination": "/public/login.html" }
+  ]
+}

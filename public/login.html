@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - PIVOT Deal Manager</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8f8f8; min-height: 100vh; display: flex; }
+        .login-wrapper { display: flex; width: 100%; height: 100vh; }
+        .login-left { flex: 1; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; color: white; }
+        .login-left h2 { font-size: 36px; font-weight: 800; margin-bottom: 20px; max-width: 500px; }
+        .login-left p { font-size: 16px; color: #ccc; margin-bottom: 40px; max-width: 500px; }
+        .login-right { flex: 1; background: white; display: flex; align-items: center; justify-content: center; padding: 40px; }
+        .login-container { width: 100%; max-width: 400px; padding: 40px; }
+        .logo { text-align: center; margin-bottom: 40px; }
+        .logo-icon { font-size: 48px; margin-bottom: 12px; }
+        .logo h1 { font-size: 32px; color: #000; font-weight: 800; margin-bottom: 4px; }
+        .logo p { font-size: 12px; color: #666; text-transform: uppercase; font-weight: 600; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; font-size: 14px; font-weight: 600; color: #333; margin-bottom: 8px; }
+        input { width: 100%; padding: 12px 15px; border: 1px solid #e0e0e0; border-radius: 8px; font-size: 14px; }
+        input:focus { outline: none; border-color: #667eea; }
+        .button-group { display: flex; gap: 10px; margin-top: 30px; }
+        button { flex: 1; padding: 12px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+        .btn-login { background: #000; color: white; }
+        .btn-login:hover { background: #1a1a1a; }
+        .btn-demo { background: white; color: #000; border: 2px solid #000; }
+        .message { margin-top: 20px; padding: 12px; border-radius: 8px; font-size: 13px; display: none; }
+        .message.error { background: #fee; color: #c33; border: 1px solid #fcc; display: block; }
+        .message.success { background: #efe; color: #3c3; border: 1px solid #cfc; display: block; }
+        .users-demo { margin-top: 30px; padding-top: 30px; border-top: 1px solid #e0e0e0; }
+        .user-pill { display: inline-block; background: #f5f5f5; padding: 6px 12px; border-radius: 20px; font-size: 12px; color: #666; margin-right: 8px; margin-bottom: 8px; cursor: pointer; }
+        .user-pill:hover { background: #667eea; color: white; }
+    </style>
+</head>
+<body>
+    <div class="login-wrapper">
+        <div class="login-left">
+            <h2>Sistema de Gestão de Vendas de Irrigação</h2>
+            <p>Gerencie propostas, arquivos e aprovações com eficiência.</p>
+        </div>
+
+        <div class="login-right">
+            <div class="login-container">
+                <div class="logo">
+                    <div class="logo-icon">📊</div>
+                    <h1>PIVOT</h1>
+                    <p>Deal Manager</p>
+                </div>
+
+                <form onsubmit="handleLogin(event)">
+                    <div class="form-group">
+                        <label for="email">Email</label>
+                        <input type="email" id="email" placeholder="seu@email.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="senha">Senha</label>
+                        <input type="password" id="senha" placeholder="Digite sua senha" required>
+                    </div>
+                    <div id="message" class="message"></div>
+                    <div class="button-group">
+                        <button type="submit" class="btn-login">Entrar</button>
+                        <button type="button" class="btn-demo" onclick="demoLogin()">Demo</button>
+                    </div>
+                </form>
+
+                <div class="users-demo">
+                    <h3 style="font-size: 12px; color: #999; text-transform: uppercase; margin-bottom: 15px;">👥 Demo Users</h3>
+                    <div class="user-pill" onclick="setLogin('silvio@pivot.com', '123456')">Silvio (Diretor)</div>
+                    <div class="user-pill" onclick="setLogin('tiago@pivot.com', '123456')">Tiago (R1/R2)</div>
+                    <div class="user-pill" onclick="setLogin('joao@pivot.com', '123456')">João (R3)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = window.location.origin;
+
+        function showMessage(text, type) {
+            const msgEl = document.getElementById('message');
+            msgEl.textContent = text;
+            msgEl.className = `message ${type}`;
+        }
+
+        function setLogin(email, senha) {
+            document.getElementById('email').value = email;
+            document.getElementById('senha').value = senha;
+        }
+
+        function demoLogin() {
+            setLogin('silvio@pivot.com', '123456');
+            handleLogin({ preventDefault: () => {} });
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+
+            const email = document.getElementById('email').value;
+            const senha = document.getElementById('senha').value;
+
+            try {
+                const response = await fetch(`${API_URL}/api/auth`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, senha })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.token) {
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('usuario', JSON.stringify(data.usuario));
+                    showMessage('✅ Login realizado!', 'success');
+                    setTimeout(() => window.location.href = '/dashboard', 1000);
+                } else {
+                    showMessage(data.message || 'Erro ao fazer login', 'error');
+                }
+            } catch (error) {
+                showMessage(`❌ Erro: ${error.message}`, 'error');
+            }
+        }
+    </script>
+</body>
+</html>
