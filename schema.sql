@@ -20,6 +20,7 @@ create table usuarios (
   salt text not null,
   nivel text not null check (nivel in ('diretor','gerente','vendedor')),
   superior_id uuid references usuarios(id),
+  regiao text, -- R1/R2/R3 (vendedor externo) ou regiao(oes) do gerente
   ativo boolean default true,
   created_at timestamptz default now()
 );
@@ -158,18 +159,22 @@ INSERT INTO config_global (chave, valor, descricao) VALUES
 ('desconto_revenda_pct', 5, 'Desconto fixo de itens de revenda (aplicado na parte nao-aerea)')
 ON CONFLICT (chave) DO NOTHING;
 
-INSERT INTO usuarios (id, nome, email, senha_hash, salt, nivel, superior_id, ativo, created_at) VALUES
-('4c8b8970-d853-4f2a-b05c-f13cbbb7960f', 'Silvio Pivot', 'silvio@pivot.com', 'f29f0d2d83444ced2870c5ce59339ef58660bf6e2b329e16e4387cd2af8d2457', '76674dae8fec7338', 'diretor', NULL, true, now()),
-('1ffb6ae4-273b-4549-86b7-63a25a1a6bc9', 'Marta Alves', 'marta@pivot.com', 'e3ae328976c49e1bd653a4f316c833c2c8ff2697f719484b182e030c6daa2403', '09ee1a8e46853215', 'gerente', '4c8b8970-d853-4f2a-b05c-f13cbbb7960f', true, now()),
-('4addecb6-f1b1-4d6a-ab18-68a067791a78', 'Roberto Lima', 'roberto@pivot.com', 'aa1b5e59c14e99cdee46083b489848d0a95d2fbc0ee09845c3ab7a0cea4fd80c', '495fa21b009609e4', 'gerente', '4c8b8970-d853-4f2a-b05c-f13cbbb7960f', true, now()),
-('751bfaab-9d2e-4359-aaa3-f899dfc352d2', 'Ana Souza', 'ana@pivot.com', '2a8a17c30d1effe0c03f71fa2d207b6eef55b85bffd146dcb60a4f7804890a87', '042f50276b9e7214', 'vendedor', '1ffb6ae4-273b-4549-86b7-63a25a1a6bc9', true, now()),
-('e59ca3c6-128e-4ed6-9431-5ebe4ad976de', 'Bruno Dias', 'bruno@pivot.com', '23f1fded35c51a3f1975f4918234602093df2f7212faea9620af584f34fb1fe9', 'b428dcb6c1a7dce4', 'vendedor', '1ffb6ae4-273b-4549-86b7-63a25a1a6bc9', true, now()),
-('07f7fec7-be89-49f3-98fb-10bfe9d3d471', 'Carla Mendes', 'carla@pivot.com', '4b3f636ea1e20a04d4a1eab54312b657a89c14e78a41e293c7ca8672ad88726b', 'e196e1d0b7634bcc', 'vendedor', '1ffb6ae4-273b-4549-86b7-63a25a1a6bc9', true, now()),
-('3fdb9724-abc9-463a-8e69-8803a69e8c71', 'Diego Rocha', 'diego@pivot.com', '70d2686c386b6584bfe540512d7f1b6e3e0a494423463c82f7f44632ab05b343', 'f008fcb4b09c70dc', 'vendedor', '1ffb6ae4-273b-4549-86b7-63a25a1a6bc9', true, now()),
-('6fbe37f6-bf0c-4b5f-bec7-9ab6d326c73c', 'Elisa Prado', 'elisa@pivot.com', '81f931fa09be978705e0edce62ccfcdd118e7b37905e751fecf00d8184d74903', 'd73a8f38fc30b281', 'vendedor', '1ffb6ae4-273b-4549-86b7-63a25a1a6bc9', true, now()),
-('735a1781-b97a-4a87-87a7-bbaf48c8c5b4', 'Fabio Nunes', 'fabio@pivot.com', '2461a255423cea5e5b1b259286b2200934d4499080d9a459b2b0250b8e48587b', 'f13f0e3dfaf4004b', 'vendedor', '4addecb6-f1b1-4d6a-ab18-68a067791a78', true, now()),
-('be0c27f1-7e80-409a-aeb9-b4927a1ff050', 'Gisele Barros', 'gisele@pivot.com', 'ec7f301ee20e1d2c2e6a0e0ac2007f28ed867c36f4e8c1fdffbe8f509ac80a63', '1854a6d74fbe1c15', 'vendedor', '4addecb6-f1b1-4d6a-ab18-68a067791a78', true, now()),
-('98458973-4219-48b2-b204-c6a3e723a684', 'Heitor Campos', 'heitor@pivot.com', '5f134d2de377c3a4144e2937f59e4ef47d08574f646de513d6d773e0b1dab9f7', 'cf499c825e462658', 'vendedor', '4addecb6-f1b1-4d6a-ab18-68a067791a78', true, now()),
-('b5c30f1e-16f8-4c23-88e9-5915e9c6602c', 'Iris Tavares', 'iris@pivot.com', 'e68b4e2429152460dd71fd986fa9d10e5fe35176898e3b3535bc964241087562', 'c8675ea51827a614', 'vendedor', '4addecb6-f1b1-4d6a-ab18-68a067791a78', true, now()),
-('9678564b-7ec8-4907-b37f-7bab02e30625', 'Joao Peixoto', 'joao@pivot.com', 'f6f75c0e1f553faba2801d8f06764c1ae0e5fc0bdeb4d5851f9923dc5871ec6b', '43c8d0d998b16723', 'vendedor', '4addecb6-f1b1-4d6a-ab18-68a067791a78', true, now())
+-- Usuarios reais da Pivot (hierarquia confirmada pelo usuario em 2026-10-17).
+-- Senha padrao para todos: 123456 (pode/deve ser trocada depois).
+INSERT INTO usuarios (id, nome, email, senha_hash, salt, nivel, superior_id, regiao, ativo, created_at) VALUES
+('18110275-3f74-4b3c-bbac-a92e976a2cb9', 'Silvio Ubiratam', 'silvio@pivot.com.br', 'baa76c34a61105ae05f1c1b16cbe558198edd361d16d91d20dbee2403c851d51', 'c65242dabb0a95ac', 'diretor', NULL, NULL, true, now()),
+('11834622-d144-4319-a69d-2432e757117f', 'Tiago Lopes Garcia', 'tiago.garcia@pivot.com.br', '11cf8b031a97ea6f274101529005a06138fff023ebe3f4f3df7e01766d9dd7a8', '055134bda5ce33bf', 'gerente', '18110275-3f74-4b3c-bbac-a92e976a2cb9', 'R1,R2', true, now()),
+('4a09d47a-2c30-4cda-a674-69f898bd4c55', 'Joao Morais', 'joao.morais@pivot.com.br', '6b32b5195af90f35f56b627f7483bc43d53f9a0ab43a3d6810b7f0dd841cb56a', 'ccdc144e9f73dc71', 'gerente', '18110275-3f74-4b3c-bbac-a92e976a2cb9', 'R3', true, now()),
+('b3c6283f-0cdb-44bc-8b70-e4e8d6145ccc', 'Itamar Junior', 'itamar.junior@pivot.com.br', '4a064da2e93c06d1765cb1ba5e30b0ec4f7fae0131d88eabf2f80de1604c1154', '06623c34adc92760', 'vendedor', '11834622-d144-4319-a69d-2432e757117f', 'R1', true, now()),
+('0688bd57-2741-46bb-b305-bc70b2e1c720', 'Thiago Santos', 'thiago.santos@pivot.com.br', '29ac1cb73cdafea559d5db5235bd9ec8ebacc36493b481d18c85d3e812d58cfc', '8c7c0c9f5292ca8d', 'vendedor', '11834622-d144-4319-a69d-2432e757117f', 'R1', true, now()),
+('a0ab90ea-6db3-4af5-9895-6e66fde0caad', 'Iury Correia', 'iury.correia@pivot.com.br', 'af80524435ae1b4ddf384030580829a35e4ec7c67e94a484186a7f6e1f6ae392', '557dcab12674beeb', 'vendedor', '11834622-d144-4319-a69d-2432e757117f', 'R1', true, now()),
+('49c38454-9a03-4ed7-b151-0794ee2c99dd', 'Doris Carvalho', 'doris.carvalho@pivot.com.br', 'ce180c8900b9746b31e8b43e448cc237a516feca0328a254ca1c75122318f9ba', 'e06beb243c1537f1', 'vendedor', '11834622-d144-4319-a69d-2432e757117f', 'R1', true, now()),
+('d69e3bf3-8bcb-44c3-8bb5-c268c43cd87b', 'Ruitter Souza', 'ruitter.souza@pivot.com.br', '06217647ea39f47be77c46a261458f8bacfcb5201e60ae654c187a4a2bea0d58', '07ad31b9f4a3a0ee', 'vendedor', '11834622-d144-4319-a69d-2432e757117f', 'R1', true, now()),
+('e4ab2005-d262-4f8f-b055-7c9d18922ec4', 'Arthur Correia', 'arthur.correia@pivot.com.br', '8ce18476462e3171b115b2c4166ed70115a7de629b87881378d3459bd72e59e4', '9213be8169207f26', 'vendedor', '11834622-d144-4319-a69d-2432e757117f', 'R1', true, now()),
+('a094a08b-0fe0-45ea-8dd6-bf02c02781dc', 'Henrique Brandao', 'henrique.brandao@pivot.com.br', 'dd448a0e22b94934bf68fffa7f276a8654ba79b7141e8d6fc43f9835fe9aa88b', '4600d177f2967a42', 'vendedor', '11834622-d144-4319-a69d-2432e757117f', 'R1', true, now()),
+('f8c00ace-9cfb-4eb9-ab80-faacfa4bccc2', 'Paulo Mendes', 'paulo.mendes@pivot.com.br', '7839ba21e63b8edf8cf82fa5e0b6193bb9b4634b52ade4591956def45008f6b9', '698aa473e52ff0dc', 'vendedor', '11834622-d144-4319-a69d-2432e757117f', 'R2', true, now()),
+('d272cbea-de61-439e-8198-485c42703a9e', 'Luismael', 'luismael@pivot.com.br', '7f2a3325d67e245e0af5fcb363ea3b6f3c4dd535644efd642942ff18367b2ff6', '111cfb762fbaa40b', 'vendedor', '11834622-d144-4319-a69d-2432e757117f', 'R2', true, now()),
+('fd3e957f-a6bf-4f9a-b436-0c3dbb975ff1', 'Felipe Dias', 'felipe.dias@pivot.com.br', '8e9196d0b59936e24bf322145c8aaedaeab041dce69a20bc626c214a465124c9', '965e86649fdc5892', 'vendedor', '4a09d47a-2c30-4cda-a674-69f898bd4c55', 'R3', true, now()),
+('dfbafc95-8cb3-41d8-bd76-2bbf1fcc55c2', 'Gerson Junior', 'gerson.junior@pivot.com.br', '958936345078507da7fd8628ec6ab399f1009b91cba5801aecb10f09fd1848b5', 'a80733cef08b7825', 'vendedor', '4a09d47a-2c30-4cda-a674-69f898bd4c55', 'R3', true, now()),
+('4b622f99-d019-42a5-a391-08a36db7f708', 'Isabella Fraga', 'isabella.fraga@pivot.com.br', 'd2f70b109c93550a5a841d3b6aefc9e00525926ce94cc7f1a19b404eb7711047', 'b23368c20866ddd9', 'vendedor', '4a09d47a-2c30-4cda-a674-69f898bd4c55', 'R3', true, now())
 ON CONFLICT (email) DO NOTHING;
