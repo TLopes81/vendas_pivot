@@ -651,6 +651,77 @@ function BotaoExcluirProjeto(props) {
   );
 }
 
+// Icone de upload rapido na propria lista de projetos -- adiciona (ou, se o
+// numero do pivo ja existir no projeto, atualiza como nova versao) uma
+// planilha sem precisar abrir o projeto primeiro.
+function BotaoUploadRapido(props) {
+  const inputRef = React.useRef(null);
+  const [status, setStatus] = useState(null);
+  const [enviando, setEnviando] = useState(false);
+
+  async function aoSelecionarArquivos(ev) {
+    const arquivos = Array.from(ev.target.files || []);
+    ev.target.value = '';
+    if (arquivos.length === 0) return;
+    setEnviando(true);
+    let pastaBase = null;
+    if (SUPORTA_PASTA_LOCAL) {
+      try { pastaBase = await obterPastaBase(); }
+      catch (e) { setStatus('Pasta local não selecionada -- enviando só pra o sistema.'); }
+    }
+    for (const arquivo of arquivos) {
+      try {
+        setStatus('Lendo ' + arquivo.name + '...');
+        const buffer = await arquivo.arrayBuffer();
+        const dado = extrairPivoDoArrayBuffer(buffer, arquivo.name);
+
+        let caminhoLocal = null, revisao = 1;
+        if (pastaBase) {
+          const r = await organizarArquivoLocal(pastaBase, {
+            cliente: props.projeto.cliente, estado: props.projeto.estado,
+            municipio: props.projeto.municipio, fazenda: props.projeto.fazenda
+          }, arquivo, arquivo.name);
+          caminhoLocal = r.caminhoRelativo; revisao = r.revisao;
+        }
+
+        const pivo = await api('/pivos', {
+          method: 'POST', body: JSON.stringify(Object.assign({}, dado, {
+            projeto_id: props.projeto.id, caminho_local: caminhoLocal, revisao: revisao
+          }))
+        }, props.token);
+
+        const fd = new FormData();
+        fd.append('arquivo', arquivo, arquivo.name);
+        fd.append('projeto_id', props.projeto.id);
+        fd.append('pivo_id', pivo.id);
+        fd.append('tipo', 'pivo');
+        await api('/arquivos', { method: 'POST', body: fd }, props.token);
+
+        setStatus(dado.numero_pivo + (pivo.nova_versao ? ' → v' + pivo.revisao + ' salva.' : ' adicionado.'));
+      } catch (e) {
+        setStatus('Erro em ' + arquivo.name + ': ' + e.message);
+      }
+    }
+    setEnviando(false);
+    props.onChange();
+  }
+
+  return (
+    <span className="row" onClick={function (ev) { ev.stopPropagation(); }} style={{ flexWrap: 'nowrap' }}>
+      <button
+        className="mini ghost"
+        title="Adicionar ou atualizar planilha de pivô deste projeto"
+        disabled={enviando}
+        onClick={function (ev) { ev.stopPropagation(); inputRef.current.click(); }}
+      >
+        {enviando ? '...' : '⬆️'}
+      </button>
+      <input ref={inputRef} type="file" accept=".xlsb" multiple style={{ display: 'none' }} onChange={aoSelecionarArquivos} />
+      {status ? <span className="muted" style={{ fontSize: '11px', maxWidth: '150px' }}>{status}</span> : null}
+    </span>
+  );
+}
+
 function Dashboard(props) {
   const [kpis, setKpis] = useState(null);
   const [escopo, setEscopo] = useState('');
@@ -698,7 +769,10 @@ function Dashboard(props) {
                   <td>{p.vendedor_nome || '-'}</td>
                   <td><span className={'tag ' + p.status}>{p.status}</span></td>
                   <td>
-                    {props.usuario.nivel === 'diretor' ? <BotaoExcluirProjeto projetoId={p.id} nomeCliente={p.cliente} token={props.token} onExcluido={carregar} /> : null}
+                    <div className="row" style={{ flexWrap: 'nowrap' }}>
+                      <BotaoUploadRapido projeto={p} token={props.token} onChange={carregar} />
+                      {props.usuario.nivel === 'diretor' ? <BotaoExcluirProjeto projetoId={p.id} nomeCliente={p.cliente} token={props.token} onExcluido={carregar} /> : null}
+                    </div>
                   </td>
                 </tr>
               );
