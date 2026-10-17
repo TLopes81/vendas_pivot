@@ -7,9 +7,15 @@
     { "source": "/usuarios/:path*", "destination": "/api/index" },
     { "source": "/projetos", "destination": "/api/index" },
     { "source": "/projetos/:path*", "destination": "/api/index" },
+    { "source": "/pivos", "destination": "/api/index" },
+    { "source": "/pivos/:path*", "destination": "/api/index" },
     { "source": "/arquivos", "destination": "/api/index" },
     { "source": "/arquivos/:path*", "destination": "/api/index" },
     { "source": "/aprovacoes", "destination": "/api/index" },
+    { "source": "/config", "destination": "/api/index" },
+    { "source": "/config/:path*", "destination": "/api/index" },
+    { "source": "/log_desconto", "destination": "/api/index" },
+    { "source": "/log_desconto/:path*", "destination": "/api/index" },
     { "source": "/dashboard", "destination": "/api/index" },
     { "source": "/health", "destination": "/api/index" }
   ]
