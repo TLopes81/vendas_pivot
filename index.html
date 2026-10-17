@@ -595,39 +595,59 @@ function ProjetoDetalhe(props) {
   );
 }
 
-// Botao de excluir com confirmacao embutida na propria linha (em vez de
-// window.confirm nativo -- em vários navegadores/contextos esse dialogo
-// nao aparece ou e descartado silenciosamente, dando a impressao de que
-// "nao acontece nada" ao clicar).
+// Modal generico de confirmacao -- em vez de window.confirm nativo, que em
+// vários navegadores/contextos nao aparece ou e descartado silenciosamente
+// (dando a impressao de que o botao "nao faz nada" ao clicar).
+function ModalConfirmacao(props) {
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(11,37,69,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+      onClick={function (ev) { ev.stopPropagation(); if (!props.confirmando) props.onCancelar(); }}
+    >
+      <div className="card" style={{ maxWidth: '360px' }} onClick={function (ev) { ev.stopPropagation(); }}>
+        <h1 style={{ fontSize: '16px' }}>{props.titulo}</h1>
+        <p className="sub">{props.mensagem}</p>
+        {props.erro ? <div className="err">{props.erro}</div> : null}
+        <div className="row" style={{ justifyContent: 'flex-end', marginTop: '16px' }}>
+          <button className="ghost" onClick={props.onCancelar} disabled={props.confirmando}>Cancelar</button>
+          <button style={{ background: '#9f1239' }} onClick={props.onConfirmar} disabled={props.confirmando}>
+            {props.confirmando ? 'Excluindo...' : 'Excluir'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BotaoExcluirProjeto(props) {
   const [confirmando, setConfirmando] = useState(false);
   const [excluindo, setExcluindo] = useState(false);
   const [erro, setErro] = useState(null);
 
-  function excluir(ev) {
-    ev.stopPropagation();
+  function excluir() {
     setExcluindo(true);
     setErro(null);
     api('/projetos/' + props.projetoId, { method: 'DELETE' }, props.token)
-      .then(function () { props.onExcluido(); })
+      .then(function () { setConfirmando(false); setExcluindo(false); props.onExcluido(); })
       .catch(function (e) { setErro(e.message); setExcluindo(false); });
   }
 
-  if (erro) {
-    return <span className="muted" style={{ color: '#9f1239' }} title={erro} onClick={function (ev) { ev.stopPropagation(); }}>Erro ao excluir</span>;
-  }
-  if (confirmando) {
-    return (
-      <span className="row" onClick={function (ev) { ev.stopPropagation(); }}>
-        <button className="mini perigo" onClick={excluir} disabled={excluindo}>{excluindo ? '...' : 'Confirmar'}</button>
-        <button className="mini ghost" onClick={function (ev) { ev.stopPropagation(); setConfirmando(false); }}>Cancelar</button>
-      </span>
-    );
-  }
   return (
-    <button className="mini ghost" title="Excluir projeto" onClick={function (ev) { ev.stopPropagation(); setConfirmando(true); }}>
-      🗑️
-    </button>
+    <React.Fragment>
+      <button className="mini ghost" title="Excluir projeto" onClick={function (ev) { ev.stopPropagation(); setConfirmando(true); }}>
+        🗑️
+      </button>
+      {confirmando ? (
+        <ModalConfirmacao
+          titulo="Excluir projeto?"
+          mensagem={'Isso remove "' + (props.nomeCliente || 'este projeto') + '" e todos os seus pivôs e arquivos. Essa ação não pode ser desfeita.'}
+          confirmando={excluindo}
+          erro={erro}
+          onConfirmar={excluir}
+          onCancelar={function () { setConfirmando(false); setErro(null); }}
+        />
+      ) : null}
+    </React.Fragment>
   );
 }
 
@@ -678,7 +698,7 @@ function Dashboard(props) {
                   <td>{p.vendedor_nome || '-'}</td>
                   <td><span className={'tag ' + p.status}>{p.status}</span></td>
                   <td>
-                    {props.usuario.nivel === 'diretor' ? <BotaoExcluirProjeto projetoId={p.id} token={props.token} onExcluido={carregar} /> : null}
+                    {props.usuario.nivel === 'diretor' ? <BotaoExcluirProjeto projetoId={p.id} nomeCliente={p.cliente} token={props.token} onExcluido={carregar} /> : null}
                   </td>
                 </tr>
               );
