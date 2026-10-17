@@ -595,6 +595,42 @@ function ProjetoDetalhe(props) {
   );
 }
 
+// Botao de excluir com confirmacao embutida na propria linha (em vez de
+// window.confirm nativo -- em vários navegadores/contextos esse dialogo
+// nao aparece ou e descartado silenciosamente, dando a impressao de que
+// "nao acontece nada" ao clicar).
+function BotaoExcluirProjeto(props) {
+  const [confirmando, setConfirmando] = useState(false);
+  const [excluindo, setExcluindo] = useState(false);
+  const [erro, setErro] = useState(null);
+
+  function excluir(ev) {
+    ev.stopPropagation();
+    setExcluindo(true);
+    setErro(null);
+    api('/projetos/' + props.projetoId, { method: 'DELETE' }, props.token)
+      .then(function () { props.onExcluido(); })
+      .catch(function (e) { setErro(e.message); setExcluindo(false); });
+  }
+
+  if (erro) {
+    return <span className="muted" style={{ color: '#9f1239' }} title={erro} onClick={function (ev) { ev.stopPropagation(); }}>Erro ao excluir</span>;
+  }
+  if (confirmando) {
+    return (
+      <span className="row" onClick={function (ev) { ev.stopPropagation(); }}>
+        <button className="mini perigo" onClick={excluir} disabled={excluindo}>{excluindo ? '...' : 'Confirmar'}</button>
+        <button className="mini ghost" onClick={function (ev) { ev.stopPropagation(); setConfirmando(false); }}>Cancelar</button>
+      </span>
+    );
+  }
+  return (
+    <button className="mini ghost" title="Excluir projeto" onClick={function (ev) { ev.stopPropagation(); setConfirmando(true); }}>
+      🗑️
+    </button>
+  );
+}
+
 function Dashboard(props) {
   const [kpis, setKpis] = useState(null);
   const [escopo, setEscopo] = useState('');
@@ -608,12 +644,6 @@ function Dashboard(props) {
   }, [props.token]);
 
   useEffect(function () { carregar(); }, [carregar]);
-
-  function excluir(id, ev) {
-    ev.stopPropagation();
-    if (!confirm('Excluir este projeto e todos os seus pivôs?')) return;
-    api('/projetos/' + id, { method: 'DELETE' }, props.token).then(carregar).catch(function (e) { setErro(e.message); });
-  }
 
   if (projetoAberto) {
     return <ProjetoDetalhe projetoId={projetoAberto} token={props.token} usuario={props.usuario} onVoltar={function () { setProjetoAberto(null); carregar(); }} />;
@@ -648,7 +678,7 @@ function Dashboard(props) {
                   <td>{p.vendedor_nome || '-'}</td>
                   <td><span className={'tag ' + p.status}>{p.status}</span></td>
                   <td>
-                    {props.usuario.nivel === 'diretor' ? <button className="mini ghost" onClick={function (ev) { excluir(p.id, ev); }}>Excluir</button> : null}
+                    {props.usuario.nivel === 'diretor' ? <BotaoExcluirProjeto projetoId={p.id} token={props.token} onExcluido={carregar} /> : null}
                   </td>
                 </tr>
               );
