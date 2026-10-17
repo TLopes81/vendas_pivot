@@ -62,6 +62,23 @@ async function idsDaEquipe(gerenteId) {
   return [gerenteId].concat((data || []).map(function (v) { return v.id; }));
 }
 
+// Confere se o usuario logado pode ver/editar o projeto (mesma regra de
+// visibilidade usada nas listas): diretor ve tudo; gerente ve a propria
+// equipe (idsDaEquipe); vendedor so o que e dele. Usado em todo endpoint
+// que recebe um projeto_id/pivo_id direto (sem isso, dava pra contornar o
+// filtro das listas so trocando o id na requisicao).
+async function possoAcessarProjeto(usuario, projetoId) {
+  if (!projetoId) return false;
+  const p = must(await supabase.from('projetos').select('vendedor_id').eq('id', projetoId).maybeSingle());
+  if (!p) return false;
+  if (usuario.nivel === 'diretor') return true;
+  if (usuario.nivel === 'gerente') {
+    const ids = await idsDaEquipe(usuario.id);
+    return ids.indexOf(p.vendedor_id) !== -1;
+  }
+  return p.vendedor_id === usuario.id;
+}
+
 function must(result) {
   if (result.error) throw result.error;
   return result.data;
@@ -264,9 +281,9 @@ app.put('/arquivos/:id/recusar', auth, async (req, res) => {
 // ---------- PIVOS ----------
 app.get('/pivos', auth, async (req, res) => {
   try {
-    let q = supabase.from('pivos').select('*');
-    if (req.query.projeto_id) q = q.eq('projeto_id', req.query.projeto_id);
-    const rows = must(await q.order('numero_pivo'));
+    if (!req.query.projeto_id) return res.status(400).json({ erro: 'Informe projeto_id' });
+    if (!(await possoAcessarProjeto(req.usuario, req.query.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
+    const rows = must(await supabase.from('pivos').select('*').eq('projeto_id', req.query.projeto_id).order('numero_pivo'));
     res.json(rows);
   } catch (e) {
     res.status(500).json({ erro: String((e && e.message) || e) });
@@ -279,6 +296,7 @@ app.post('/pivos', auth, async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.projeto_id || !b.numero_pivo) return res.status(400).json({ erro: 'Informe projeto_id e numero_pivo' });
+    if (!(await possoAcessarProjeto(req.usuario, b.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
 
     const { icmsPct, pisPct, descRevendaPct } = await getConstantesFiscais(b.estado || (must(await supabase.from('projetos').select('estado').eq('id', b.projeto_id).maybeSingle()) || {}).estado);
 
@@ -326,6 +344,7 @@ app.put('/pivos/:id/desconto', auth, async (req, res) => {
   try {
     const p = must(await supabase.from('pivos').select('*').eq('id', req.params.id).maybeSingle());
     if (!p) return res.status(404).json({ erro: 'Pivo nao encontrado' });
+    if (!(await possoAcessarProjeto(req.usuario, p.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
 
     const b = req.body || {};
     const desconto_pct = b.desconto_pct != null ? Number(b.desconto_pct) : p.desconto_pct;
@@ -470,6 +489,7 @@ app.get('/projetos/:id/resumo', auth, async (req, res) => {
   try {
     const p = must(await supabase.from('projetos').select('*').eq('id', req.params.id).maybeSingle());
     if (!p) return res.status(404).json({ erro: 'Projeto nao encontrado' });
+    if (!(await possoAcessarProjeto(req.usuario, p.id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
     const pivos = must(await supabase.from('pivos').select('*').eq('projeto_id', p.id).order('numero_pivo'));
     const valorTotal = pivos.reduce(function (s, r) { return s + (Number(r.valor_negociado) || 0); }, 0);
     const areaTotal = pivos.reduce(function (s, r) { return s + (Number(r.area_irrigada_ha) || 0); }, 0);
@@ -508,6 +528,7 @@ app.post('/arquivos', auth, upload.single('arquivo'), async (req, res) => {
     const projetoId = req.body.projeto_id;
     const p = must(await supabase.from('projetos').select('id').eq('id', projetoId).maybeSingle());
     if (!p) return res.status(404).json({ erro: 'Projeto nao encontrado' });
+    if (!(await possoAcessarProjeto(req.usuario, projetoId))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
 
     const caminhoStorage = projetoId + '/' + Date.now() + '-' + req.file.originalname;
     const { error: upErr } = await supabase.storage.from(BUCKET).upload(caminhoStorage, req.file.buffer, {
@@ -539,9 +560,9 @@ app.post('/arquivos', auth, upload.single('arquivo'), async (req, res) => {
 
 app.get('/arquivos', auth, async (req, res) => {
   try {
-    let q = supabase.from('arquivos').select('id,projeto_id,nome,caminho,tamanho,mimetype,created_at');
-    if (req.query.projeto_id) q = q.eq('projeto_id', req.query.projeto_id);
-    const rows = must(await q.order('created_at', { ascending: false }));
+    if (!req.query.projeto_id) return res.status(400).json({ erro: 'Informe projeto_id' });
+    if (!(await possoAcessarProjeto(req.usuario, req.query.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
+    const rows = must(await supabase.from('arquivos').select('id,projeto_id,nome,caminho,tamanho,mimetype,created_at').eq('projeto_id', req.query.projeto_id).order('created_at', { ascending: false }));
     res.json(rows);
   } catch (e) {
     res.status(500).json({ erro: String((e && e.message) || e) });
