@@ -290,17 +290,30 @@ app.get('/pivos', auth, async (req, res) => {
   }
 });
 
-// Usado pelo script local de extracao: cria/atualiza um pivo a partir do
-// arquivo de proposta (.xlsb) lido na maquina do usuario.
+// Cria OU atualiza um pivo a partir do arquivo de proposta (.xlsb) lido no
+// navegador. Reenviar a planilha de um pivo que ja existe no mesmo projeto
+// (mesmo projeto_id + numero_pivo) NUNCA cria uma segunda linha -- isso
+// contaria o pivo em dobro no dashboard (valor, area). Em vez disso:
+//   1) o estado atual e congelado em pivos_historico (nada se perde);
+//   2) a MESMA linha e atualizada com os dados tecnicos/monetarios novos
+//      (area, preco_total, preco_parte_aerea, montagem, servicos_adicionais,
+//      arquivo/caminho local, revisao +1);
+//   3) os campos puramente de negociacao (encargos_pct, desconto_pct,
+//      taxa_flat_pct) sao SEMPRE preservados da versao anterior -- o fluxo
+//      de upload nunca os envia, entao eles so mudam via PUT /desconto, e
+//      continuam valendo sobre a versao mais nova, nunca sobre uma antiga.
 app.post('/pivos', auth, async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.projeto_id || !b.numero_pivo) return res.status(400).json({ erro: 'Informe projeto_id e numero_pivo' });
     if (!(await possoAcessarProjeto(req.usuario, b.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
 
+    const existente = must(await supabase.from('pivos').select('*')
+      .eq('projeto_id', b.projeto_id).eq('numero_pivo', b.numero_pivo).maybeSingle());
+
     const { icmsPct, pisPct, descRevendaPct } = await getConstantesFiscais(b.estado || (must(await supabase.from('projetos').select('estado').eq('id', b.projeto_id).maybeSingle()) || {}).estado);
 
-    const base = {
+    const dadosTecnicos = {
       projeto_id: b.projeto_id,
       numero_pivo: b.numero_pivo,
       composicao: b.composicao || null,
@@ -310,27 +323,57 @@ app.post('/pivos', auth, async (req, res) => {
       marca: b.marca || null,
       modelo: b.modelo || null,
       area_irrigada_ha: b.area_irrigada_ha != null ? Number(b.area_irrigada_ha) : null,
-      encargos_pct: b.encargos_pct != null ? Number(b.encargos_pct) : 10,
-      desconto_pct: b.desconto_pct != null ? Number(b.desconto_pct) : 0,
-      taxa_flat_pct: b.taxa_flat_pct != null ? Number(b.taxa_flat_pct) : 0,
       montagem: Number(b.montagem) || 0,
       servicos_adicionais: Number(b.servicos_adicionais) || 0,
       preco_total: Number(b.preco_total) || 0,
       preco_parte_aerea: Number(b.preco_parte_aerea) || 0,
       preco_pvc: Number(b.preco_pvc) || 0,
-      revisao: b.revisao || 1,
       nome_arquivo_original: b.nome_arquivo_original || null,
       caminho_local: b.caminho_local || null,
-      linha_calculadora: b.linha_calculadora || null,
+      linha_calculadora: b.linha_calculadora != null ? b.linha_calculadora : (existente ? existente.linha_calculadora : null),
       updated_at: new Date().toISOString()
     };
-    const calc = recalcularValorNegociado(base, icmsPct, pisPct, descRevendaPct);
-    base.valor_negociado = calc.valorNegociado;
-    base.custo_por_hectare = calc.custoPorHectare;
-    base.pct_ancillary = calc.pctAncillary;
 
-    const row = must(await supabase.from('pivos').insert(base).select().single());
-    res.status(201).json(row);
+    // Campos de negociacao: preserva o que ja estava, so usa o enviado no
+    // corpo se vier explicitamente (o fluxo de upload normal nunca manda).
+    const campos = Object.assign({}, dadosTecnicos, {
+      encargos_pct: b.encargos_pct != null ? Number(b.encargos_pct) : (existente ? existente.encargos_pct : 10),
+      desconto_pct: b.desconto_pct != null ? Number(b.desconto_pct) : (existente ? existente.desconto_pct : 0),
+      taxa_flat_pct: b.taxa_flat_pct != null ? Number(b.taxa_flat_pct) : (existente ? existente.taxa_flat_pct : 0),
+      revisao: existente ? (existente.revisao || 1) + 1 : (b.revisao || 1)
+    });
+
+    const calc = recalcularValorNegociado(campos, icmsPct, pisPct, descRevendaPct);
+    campos.valor_negociado = calc.valorNegociado;
+    campos.custo_por_hectare = calc.custoPorHectare;
+    campos.pct_ancillary = calc.pctAncillary;
+
+    let row;
+    if (existente) {
+      await supabase.from('pivos_historico').insert({
+        pivo_id: existente.id,
+        revisao: existente.revisao || 1,
+        dados: existente,
+        substituido_por: req.usuario.id
+      });
+      row = must(await supabase.from('pivos').update(campos).eq('id', existente.id).select().single());
+    } else {
+      row = must(await supabase.from('pivos').insert(campos).select().single());
+    }
+    res.status(existente ? 200 : 201).json(Object.assign({}, row, { nova_versao: !!existente }));
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
+// Historico de versoes anteriores de um pivo (mais recente primeiro).
+app.get('/pivos/:id/historico', auth, async (req, res) => {
+  try {
+    const p = must(await supabase.from('pivos').select('projeto_id').eq('id', req.params.id).maybeSingle());
+    if (!p) return res.status(404).json({ erro: 'Pivo nao encontrado' });
+    if (!(await possoAcessarProjeto(req.usuario, p.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
+    const rows = must(await supabase.from('pivos_historico').select('*').eq('pivo_id', req.params.id).order('revisao', { ascending: false }));
+    res.json(rows);
   } catch (e) {
     res.status(500).json({ erro: String((e && e.message) || e) });
   }

@@ -383,7 +383,7 @@ function EnviarPivo(props) {
         if (destinatarioId) fd.append('destinatario_id', destinatarioId);
         await api('/arquivos', { method: 'POST', body: fd }, props.token);
 
-        setStatus(dado.numero_pivo + ' enviado com sucesso.');
+        setStatus(dado.numero_pivo + (pivo.nova_versao ? ' atualizado para a v' + pivo.revisao + ' (negociação já feita foi mantida).' : ' enviado com sucesso.'));
       } catch (e) {
         setStatus('Erro em ' + arquivo.name + ': ' + e.message);
       }
@@ -442,6 +442,36 @@ function ArquivosDoProjeto(props) {
   );
 }
 
+function HistoricoPivo(props) {
+  const [lista, setLista] = useState(null);
+  useEffect(function () {
+    api('/pivos/' + props.pivoId + '/historico', {}, props.token).then(setLista).catch(function () { setLista([]); });
+  }, [props.pivoId, props.token]);
+
+  if (lista === null) return <p className="muted">Carregando histórico...</p>;
+  if (lista.length === 0) return <p className="muted">Esta é a primeira versão enviada -- sem histórico anterior.</p>;
+  return (
+    <table>
+      <thead><tr><th>Versão</th><th>Área</th><th>Valor Negociado</th><th>Desconto</th><th>Arquivo</th><th>Substituído em</th></tr></thead>
+      <tbody>
+        {lista.map(function (h) {
+          const d = h.dados || {};
+          return (
+            <tr key={h.id}>
+              <td>v{h.revisao}</td>
+              <td>{numero(d.area_irrigada_ha, 1)} ha</td>
+              <td>{brl(d.valor_negociado)}</td>
+              <td>{d.desconto_pct}%</td>
+              <td className="muted">{d.nome_arquivo_original || '-'}</td>
+              <td className="muted">{new Date(h.created_at).toLocaleString('pt-BR')}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 function LinhaPivo(props) {
   const piv = props.pivo;
   const [campos, setCampos] = useState({
@@ -450,6 +480,7 @@ function LinhaPivo(props) {
   });
   const [editando, setEditando] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const [verHistorico, setVerHistorico] = useState(false);
 
   function campo(nome, valor) { setCampos(Object.assign({}, campos, { [nome]: valor })); }
 
@@ -462,34 +493,46 @@ function LinhaPivo(props) {
   }
 
   return (
-    <tr>
-      <td>{piv.numero_pivo}</td>
-      <td>{piv.composicao}</td>
-      <td>{numero(piv.area_irrigada_ha, 1)} ha</td>
-      {editando ? (
-        <td colSpan={2}>
-          <div className="grid-campos">
-            <div><label>Encargos %</label><input className="campo-mini" type="number" value={campos.encargos_pct} onChange={function (e) { campo('encargos_pct', e.target.value); }} /></div>
-            <div><label>Desconto %</label><input className="campo-mini" type="number" value={campos.desconto_pct} onChange={function (e) { campo('desconto_pct', e.target.value); }} /></div>
-            <div><label>Taxa Flat %</label><input className="campo-mini" type="number" value={campos.taxa_flat_pct} onChange={function (e) { campo('taxa_flat_pct', e.target.value); }} /></div>
-            <div><label>Montagem</label><input className="campo-mini" type="number" value={campos.montagem} onChange={function (e) { campo('montagem', e.target.value); }} /></div>
-            <div><label>Serv. Adicionais</label><input className="campo-mini" type="number" value={campos.servicos_adicionais} onChange={function (e) { campo('servicos_adicionais', e.target.value); }} /></div>
-          </div>
-          <button className="mini" onClick={salvar} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
-          <button className="mini ghost" onClick={function () { setEditando(false); }} style={{ marginLeft: '6px' }}>Cancelar</button>
+    <React.Fragment>
+      <tr>
+        <td>{piv.numero_pivo}</td>
+        <td>{piv.composicao}</td>
+        <td>{numero(piv.area_irrigada_ha, 1)} ha</td>
+        {editando ? (
+          <td colSpan={2}>
+            <div className="grid-campos">
+              <div><label>Encargos %</label><input className="campo-mini" type="number" value={campos.encargos_pct} onChange={function (e) { campo('encargos_pct', e.target.value); }} /></div>
+              <div><label>Desconto %</label><input className="campo-mini" type="number" value={campos.desconto_pct} onChange={function (e) { campo('desconto_pct', e.target.value); }} /></div>
+              <div><label>Taxa Flat %</label><input className="campo-mini" type="number" value={campos.taxa_flat_pct} onChange={function (e) { campo('taxa_flat_pct', e.target.value); }} /></div>
+              <div><label>Montagem</label><input className="campo-mini" type="number" value={campos.montagem} onChange={function (e) { campo('montagem', e.target.value); }} /></div>
+              <div><label>Serv. Adicionais</label><input className="campo-mini" type="number" value={campos.servicos_adicionais} onChange={function (e) { campo('servicos_adicionais', e.target.value); }} /></div>
+            </div>
+            <button className="mini" onClick={salvar} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
+            <button className="mini ghost" onClick={function () { setEditando(false); }} style={{ marginLeft: '6px' }}>Cancelar</button>
+          </td>
+        ) : (
+          <td colSpan={2}>
+            <div className="row">
+              <span>Enc. {piv.encargos_pct}% &middot; Desc. {piv.desconto_pct}% &middot; Flat {piv.taxa_flat_pct}% &middot; Mont. {brl(piv.montagem)} &middot; Serv. {brl(piv.servicos_adicionais)}</span>
+              {props.podeEditar ? <button className="mini ghost" onClick={function () { setEditando(true); }}>Editar</button> : null}
+            </div>
+          </td>
+        )}
+        <td><strong>{brl(piv.valor_negociado)}</strong></td>
+        <td>{brl(piv.custo_por_hectare)}/ha</td>
+        <td className="muted">
+          v{piv.revisao}{' '}
+          {piv.revisao > 1 ? <button className="mini ghost" onClick={function () { setVerHistorico(!verHistorico); }}>{verHistorico ? 'ocultar' : 'histórico'}</button> : null}
         </td>
-      ) : (
-        <td colSpan={2}>
-          <div className="row">
-            <span>Enc. {piv.encargos_pct}% &middot; Desc. {piv.desconto_pct}% &middot; Flat {piv.taxa_flat_pct}% &middot; Mont. {brl(piv.montagem)} &middot; Serv. {brl(piv.servicos_adicionais)}</span>
-            {props.podeEditar ? <button className="mini ghost" onClick={function () { setEditando(true); }}>Editar</button> : null}
-          </div>
-        </td>
-      )}
-      <td><strong>{brl(piv.valor_negociado)}</strong></td>
-      <td>{brl(piv.custo_por_hectare)}/ha</td>
-      <td className="muted">v{piv.revisao}</td>
-    </tr>
+      </tr>
+      {verHistorico ? (
+        <tr>
+          <td colSpan={8}>
+            <HistoricoPivo pivoId={piv.id} token={props.token} />
+          </td>
+        </tr>
+      ) : null}
+    </React.Fragment>
   );
 }
 

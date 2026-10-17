@@ -102,6 +102,10 @@ create table config_global (
   updated_at timestamptz default now()
 );
 
+-- Arquivo enviado por um vendedor para um destinatario (gerente/diretor) aprovar.
+-- O destinatario "aceita" (status vira aceito) e, nesse momento, o navegador
+-- do destinatario organiza uma copia local do arquivo na mesma estrutura de
+-- pastas (Cliente/Estado/Municipio/Fazenda/versoes) usada pelo vendedor.
 create table arquivos (
   id uuid primary key default gen_random_uuid(),
   projeto_id uuid references projetos(id) on delete cascade,
@@ -112,6 +116,9 @@ create table arquivos (
   tamanho bigint,
   mimetype text,
   enviado_por uuid references usuarios(id),
+  destinatario_id uuid references usuarios(id),
+  status text default 'pendente' check (status in ('pendente','aceito','recusado')),
+  aceito_em timestamptz,
   created_at timestamptz default now()
 );
 
@@ -121,6 +128,22 @@ create table aprovacoes (
   aprovador_id uuid references usuarios(id),
   decisao text,
   comentario text,
+  created_at timestamptz default now()
+);
+
+-- Historico de versoes de um pivo. Reenviar a planilha de um pivo que ja
+-- existe no projeto (mesmo projeto_id + numero_pivo) NAO cria uma linha
+-- nova em `pivos` -- atualiza a mesma linha (ela e sempre "a versao
+-- atual", e e nela que desconto/encargos/margem continuam sendo
+-- editados). O estado anterior inteiro fica congelado aqui antes da
+-- atualizacao, pra nunca perder historico nem contar o pivo em dobro no
+-- dashboard.
+create table pivos_historico (
+  id uuid primary key default gen_random_uuid(),
+  pivo_id uuid references pivos(id) on delete cascade,
+  revisao int not null,
+  dados jsonb not null, -- snapshot completo da linha de `pivos` antes da atualizacao
+  substituido_por uuid references usuarios(id),
   created_at timestamptz default now()
 );
 
@@ -144,6 +167,7 @@ alter table config_fiscal disable row level security;
 alter table config_global disable row level security;
 alter table arquivos disable row level security;
 alter table aprovacoes disable row level security;
+alter table pivos_historico disable row level security;
 alter table log_desconto disable row level security;
 
 -- Dados fiscais extraidos da aba "Dados" da Calculadora real (validos para todas as planilhas)
