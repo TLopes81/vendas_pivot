@@ -50,6 +50,12 @@
   .voltar { background:none; color:var(--azul2); height:auto; padding:0; font-size:13px; font-weight:600; margin-bottom:12px; }
   .grid-campos { display:grid; grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); gap:8px; margin:8px 0; }
   .grid-campos label { margin:0 0 2px; font-size:10px; }
+  @media print {
+    body * { visibility: hidden; }
+    #resumo-comercial-imprimir, #resumo-comercial-imprimir * { visibility: visible; }
+    #resumo-comercial-imprimir { position: absolute; left: 0; top: 0; width: 100%; }
+    .no-imprimir { display: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -536,6 +542,73 @@ function LinhaPivo(props) {
   );
 }
 
+// Dashboard POR PROJETO -- analise comercial: cliente + dados tecnicos +
+// valores de todos os pivos do projeto, no formato da proposta final que
+// vai pro cliente (mesma estrutura da tabela "RESUMO VALORES" usada na
+// apresentacao comercial em PDF). Botao "Imprimir / Baixar PDF" usa o
+// dialogo de impressao do navegador, restrito a esta area (ver @media
+// print no <style>), sem precisar de nenhuma biblioteca nova.
+function ResumoComercial(props) {
+  const p = props.projeto;
+  const pivos = props.pivos;
+  const total = props.resumo;
+
+  return (
+    <div className="panel">
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <h2 style={{ margin: 0 }}>Análise comercial — proposta ao cliente</h2>
+        <button className="ghost no-imprimir" onClick={function () { window.print(); }}>Imprimir / Baixar PDF</button>
+      </div>
+      <div id="resumo-comercial-imprimir" style={{ marginTop: '14px' }}>
+        <h1 style={{ fontSize: '18px', margin: '0 0 6px' }}>PROPOSTA COMERCIAL</h1>
+        <p style={{ margin: 0 }}>{p.cliente}</p>
+        <p className="muted" style={{ margin: '2px 0 0' }}>
+          {p.fazenda ? p.fazenda + ' — ' : ''}{p.municipio ? p.municipio + '/' : ''}{p.estado || ''}
+        </p>
+        <p className="muted" style={{ margin: '2px 0 14px' }}>
+          {new Date().toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' })}
+        </p>
+
+        <div className="kpis" style={{ marginBottom: '14px' }}>
+          <div className="kpi"><span>Pivôs centrais</span><strong>{total.qtde_pivos}</strong></div>
+          <div className="kpi"><span>Área irrigada</span><strong>{numero(total.area_total_ha, 2)} ha</strong></div>
+          <div className="kpi"><span>Valor total</span><strong>{brl(total.valor_total)}</strong></div>
+        </div>
+
+        <table>
+          <thead>
+            <tr><th>Número do pivô</th><th>Composição</th><th>Área irrigada (ha)</th><th>Valor Negociado</th></tr>
+          </thead>
+          <tbody>
+            {pivos.map(function (piv) {
+              return (
+                <tr key={piv.id}>
+                  <td>{piv.numero_pivo}{piv.propriedade ? <div className="muted" style={{ fontSize: '11px' }}>{piv.propriedade}</div> : null}</td>
+                  <td>{piv.composicao}</td>
+                  <td>{numero(piv.area_irrigada_ha, 2)}</td>
+                  <td>{brl(piv.valor_negociado)}</td>
+                </tr>
+              );
+            })}
+            {pivos.length === 0 ? <tr><td colSpan={4} className="muted">Nenhum pivô ainda.</td></tr> : null}
+            <tr>
+              <td colSpan={2}><strong>TOTAL</strong></td>
+              <td><strong>{numero(total.area_total_ha, 2)} ha</strong></td>
+              <td><strong>{brl(total.valor_total)}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+
+        {p.vendedor_nome ? (
+          <p className="muted" style={{ marginTop: '14px' }}>
+            {p.vendedor_nome}{p.vendedor_email ? ' — ' + p.vendedor_email : ''}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function ProjetoDetalhe(props) {
   const [dados, setDados] = useState(null);
   const [erro, setErro] = useState(null);
@@ -572,6 +645,8 @@ function ProjetoDetalhe(props) {
           <div className="kpi"><span>Custo médio/ha</span><strong>{brl(r.custo_por_hectare_medio)}</strong></div>
         </div>
       </div>
+
+      <ResumoComercial projeto={p} pivos={dados.pivos} resumo={r} />
 
       <EnviarPivo token={props.token} projeto={p} onChange={carregar} />
 

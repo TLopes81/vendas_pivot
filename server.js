@@ -543,8 +543,9 @@ app.get('/projetos/:id/resumo', auth, async (req, res) => {
     const pivos = must(await supabase.from('pivos').select('*').eq('projeto_id', p.id).order('numero_pivo'));
     const valorTotal = pivos.reduce(function (s, r) { return s + (Number(r.valor_negociado) || 0); }, 0);
     const areaTotal = pivos.reduce(function (s, r) { return s + (Number(r.area_irrigada_ha) || 0); }, 0);
+    const vendedor = p.vendedor_id ? must(await supabase.from('usuarios').select('nome,email').eq('id', p.vendedor_id).maybeSingle()) : null;
     res.json({
-      projeto: p,
+      projeto: Object.assign({}, p, { vendedor_nome: vendedor ? vendedor.nome : null, vendedor_email: vendedor ? vendedor.email : null }),
       pivos: pivos,
       resumo: {
         qtde_pivos: pivos.length,
