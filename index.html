@@ -23,6 +23,9 @@
   .ok { background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46; padding:10px; border-radius:9px; font-size:12px; margin-top:14px; }
   header { background:var(--azul); color:#fff; padding:14px 22px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; }
   header .who { font-size:12px; opacity:.85; }
+  nav.tabs { display:flex; gap:6px; }
+  nav.tabs button { height:34px; background:rgba(255,255,255,.08); color:#fff; font-size:12px; padding:0 14px; }
+  nav.tabs button.ativo { background:#fff; color:var(--azul); }
   main { padding:22px; max-width:1200px; margin:0 auto; }
   .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:20px; }
   .kpi { background:#fff; border:1px solid var(--borda); border-radius:12px; padding:14px; }
@@ -31,6 +34,8 @@
   table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--borda); border-radius:12px; overflow:hidden; }
   th, td { text-align:left; padding:10px 12px; font-size:13px; border-bottom:1px solid #eef3f7; }
   th { background:#f8fbfe; font-size:11px; text-transform:uppercase; color:#6b7a82; }
+  tr.clicavel { cursor:pointer; }
+  tr.clicavel:hover { background:#f8fbfe; }
   .tag { font-size:11px; padding:3px 8px; border-radius:999px; font-weight:600; }
   .tag.em_negociacao { background:#fff5e0; color:#8c520a; }
   .tag.aprovado { background:#ecfdf5; color:#065f46; }
@@ -38,6 +43,8 @@
   .panel { background:#fff; border:1px solid var(--borda); border-radius:12px; padding:16px; margin-bottom:18px; }
   .panel h2 { margin:0 0 12px; font-size:15px; }
   .muted { font-size:12px; color:#6b7a82; }
+  .desconto-input { width:70px; height:30px; padding:0 8px; text-align:right; }
+  .voltar { background:none; color:var(--azul2); height:auto; padding:0; font-size:13px; font-weight:600; margin-bottom:12px; }
 </style>
 </head>
 <body>
@@ -68,10 +75,13 @@ function api(path, options, token) {
 function brl(v) {
   return (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
+function numero(v, casas) {
+  return (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: casas || 0, maximumFractionDigits: casas || 0 });
+}
 
 function Login(props) {
-  const [email, setEmail] = useState('silvio@pivot.com');
-  const [senha, setSenha] = useState('123456');
+  const [email, setEmail] = useState('');
+  const [senha, setSenha] = useState('');
   const [erro, setErro] = useState(null);
   const [carregando, setCarregando] = useState(false);
 
@@ -90,7 +100,7 @@ function Login(props) {
         <h1>PIVOT Deal Manager</h1>
         <p className="sub">Hierarquia: diretor &gt; gerente &gt; vendedor</p>
         <label>E-mail</label>
-        <input type="email" value={email} onChange={function (e) { setEmail(e.target.value); }} required />
+        <input type="email" value={email} onChange={function (e) { setEmail(e.target.value); }} placeholder="nome.sobrenome@pivot.com.br" required />
         <label>Senha</label>
         <input type="password" value={senha} onChange={function (e) { setSenha(e.target.value); }} required />
         <div style={{ height: '16px' }} />
@@ -98,10 +108,6 @@ function Login(props) {
           {carregando ? 'Entrando...' : 'Entrar'}
         </button>
         {erro ? <div className="err">{erro}</div> : null}
-        <p className="muted" style={{ marginTop: '14px' }}>
-          Diretor: silvio@pivot.com &nbsp;|&nbsp; Gerentes: marta@ / roberto@pivot.com &nbsp;|&nbsp; Vendedores: ana@, bruno@, carla@, diego@, elisa@, fabio@, gisele@, heitor@, iris@, joao@pivot.com
-          <br />Senha de todos: 123456
-        </p>
       </form>
     </div>
   );
@@ -109,26 +115,125 @@ function Login(props) {
 
 function NovoProjeto(props) {
   const [cliente, setCliente] = useState('');
-  const [valor, setValor] = useState('');
-  const [custo, setCusto] = useState('');
+  const [estado, setEstado] = useState('');
+  const [municipio, setMunicipio] = useState('');
+  const [fazenda, setFazenda] = useState('');
   const [msg, setMsg] = useState(null);
 
   function salvar(e) {
     e.preventDefault();
-    api('/projetos', { method: 'POST', body: JSON.stringify({ cliente: cliente, valor: valor, custo: custo }) }, props.token)
-      .then(function () { setMsg('Projeto criado.'); setCliente(''); setValor(''); setCusto(''); props.onChange(); })
+    api('/projetos', { method: 'POST', body: JSON.stringify({ cliente: cliente, estado: estado, municipio: municipio, fazenda: fazenda }) }, props.token)
+      .then(function (p) {
+        setMsg('Projeto criado. ID: ' + p.id + ' (use esse ID no script local extrator_pivot.py --projeto-id)');
+        setCliente(''); setEstado(''); setMunicipio(''); setFazenda('');
+        props.onChange();
+      })
       .catch(function (err) { setMsg('Erro: ' + err.message); });
   }
   return (
     <div className="panel">
       <h2>Novo projeto</h2>
+      <p className="muted" style={{ marginTop: '-6px' }}>
+        O projeto só guarda o cliente/local aqui. Os pivôs (dados técnicos e valores) entram
+        via o script local de extração, que lê os arquivos .xlsb e envia pra este projeto.
+      </p>
       <form onSubmit={salvar} className="row">
-        <input placeholder="Cliente" value={cliente} onChange={function (e) { setCliente(e.target.value); }} required style={{ maxWidth: '240px' }} />
-        <input placeholder="Valor" value={valor} onChange={function (e) { setValor(e.target.value); }} style={{ maxWidth: '120px' }} />
-        <input placeholder="Custo" value={custo} onChange={function (e) { setCusto(e.target.value); }} style={{ maxWidth: '120px' }} />
+        <input placeholder="Cliente" value={cliente} onChange={function (e) { setCliente(e.target.value); }} required style={{ maxWidth: '220px' }} />
+        <input placeholder="Estado (UF)" value={estado} onChange={function (e) { setEstado(e.target.value.toUpperCase()); }} maxLength={2} style={{ maxWidth: '90px' }} />
+        <input placeholder="Município" value={municipio} onChange={function (e) { setMunicipio(e.target.value); }} style={{ maxWidth: '180px' }} />
+        <input placeholder="Fazenda/Propriedade" value={fazenda} onChange={function (e) { setFazenda(e.target.value); }} style={{ maxWidth: '200px' }} />
         <button type="submit">Criar</button>
-        {msg ? <span className="muted">{msg}</span> : null}
       </form>
+      {msg ? <p className="muted" style={{ marginTop: '10px' }}>{msg}</p> : null}
+    </div>
+  );
+}
+
+function LinhaPivo(props) {
+  const piv = props.pivo;
+  const [desconto, setDesconto] = useState(piv.desconto_pct);
+  const [salvando, setSalvando] = useState(false);
+
+  function salvarDesconto() {
+    setSalvando(true);
+    api('/pivos/' + piv.id + '/desconto', { method: 'PUT', body: JSON.stringify({ desconto_pct: Number(desconto) }) }, props.token)
+      .then(function () { props.onChange(); })
+      .catch(function (e) { alert('Erro ao atualizar desconto: ' + e.message); })
+      .then(function () { setSalvando(false); });
+  }
+
+  return (
+    <tr>
+      <td>{piv.numero_pivo}</td>
+      <td>{piv.composicao}</td>
+      <td>{numero(piv.area_irrigada_ha, 1)} ha</td>
+      <td>
+        <div className="row">
+          <input className="desconto-input" type="number" step="1" value={desconto}
+                 onChange={function (e) { setDesconto(e.target.value); }} disabled={!props.podeEditar} />
+          <span className="muted">%</span>
+          {props.podeEditar ? (
+            <button className="mini ghost" onClick={salvarDesconto} disabled={salvando || Number(desconto) === piv.desconto_pct}>
+              {salvando ? '...' : 'Salvar'}
+            </button>
+          ) : null}
+        </div>
+      </td>
+      <td><strong>{brl(piv.valor_negociado)}</strong></td>
+      <td>{brl(piv.custo_por_hectare)}/ha</td>
+      <td className="muted">v{piv.revisao}</td>
+    </tr>
+  );
+}
+
+function ProjetoDetalhe(props) {
+  const [dados, setDados] = useState(null);
+  const [erro, setErro] = useState(null);
+
+  const carregar = useCallback(function () {
+    api('/projetos/' + props.projetoId + '/resumo', {}, props.token).then(setDados).catch(function (e) { setErro(e.message); });
+  }, [props.projetoId, props.token]);
+
+  useEffect(function () { carregar(); }, [carregar]);
+
+  const podeEditar = props.usuario.nivel === 'gerente' || props.usuario.nivel === 'diretor' || props.usuario.nivel === 'vendedor';
+
+  if (erro) return <div className="err">{erro}</div>;
+  if (!dados) return <p className="muted">Carregando...</p>;
+
+  const p = dados.projeto;
+  const r = dados.resumo;
+
+  return (
+    <div>
+      <button className="voltar" onClick={props.onVoltar}>&larr; Voltar aos projetos</button>
+      <div className="panel">
+        <h2>{p.cliente}</h2>
+        <p className="muted">
+          {p.fazenda ? p.fazenda + ' — ' : ''}{p.municipio ? p.municipio + '/' : ''}{p.estado || ''}
+          &nbsp;&middot;&nbsp;<span className={'tag ' + p.status}>{p.status}</span>
+        </p>
+        <div className="kpis">
+          <div className="kpi"><span>Pivôs</span><strong>{r.qtde_pivos}</strong></div>
+          <div className="kpi"><span>Área total</span><strong>{numero(r.area_total_ha, 1)} ha</strong></div>
+          <div className="kpi"><span>Valor total negociado</span><strong>{brl(r.valor_total)}</strong></div>
+          <div className="kpi"><span>Custo médio/ha</span><strong>{brl(r.custo_por_hectare_medio)}</strong></div>
+        </div>
+      </div>
+      <div className="panel">
+        <h2>Pivôs</h2>
+        <table>
+          <thead>
+            <tr><th>Nº Pivô</th><th>Composição</th><th>Área</th><th>Desconto</th><th>Valor Negociado</th><th>Custo/ha</th><th>Versão</th></tr>
+          </thead>
+          <tbody>
+            {dados.pivos.map(function (piv) {
+              return <LinhaPivo key={piv.id} pivo={piv} token={props.token} podeEditar={podeEditar} onChange={carregar} />;
+            })}
+            {dados.pivos.length === 0 ? <tr><td colSpan={7} className="muted">Nenhum pivô ainda. Rode o extrator_pivot.py apontando pra este projeto.</td></tr> : null}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -137,95 +242,171 @@ function Dashboard(props) {
   const [kpis, setKpis] = useState(null);
   const [escopo, setEscopo] = useState('');
   const [projetos, setProjetos] = useState([]);
-  const [usuarios, setUsuarios] = useState([]);
+  const [projetoAberto, setProjetoAberto] = useState(null);
   const [erro, setErro] = useState(null);
 
   const carregar = useCallback(function () {
     api('/dashboard', {}, props.token).then(function (d) { setKpis(d.kpis); setEscopo(d.escopo); }).catch(function (e) { setErro(e.message); });
     api('/projetos', {}, props.token).then(setProjetos).catch(function (e) { setErro(e.message); });
-    api('/usuarios', {}, props.token).then(setUsuarios).catch(function () { setUsuarios([]); });
   }, [props.token]);
 
   useEffect(function () { carregar(); }, [carregar]);
 
-  function decidir(id, decisao) {
-    api('/aprovacoes', { method: 'POST', body: JSON.stringify({ projeto_id: id, decisao: decisao, comentario: 'Avaliado na tela' }) }, props.token)
-      .then(carregar).catch(function (e) { setErro(e.message); });
-  }
-  function excluir(id) {
+  function excluir(id, ev) {
+    ev.stopPropagation();
+    if (!confirm('Excluir este projeto e todos os seus pivôs?')) return;
     api('/projetos/' + id, { method: 'DELETE' }, props.token).then(carregar).catch(function (e) { setErro(e.message); });
   }
 
-  const podeCriar = true;
-  const podeAprovar = props.usuario.nivel === 'gerente' || props.usuario.nivel === 'diretor';
+  if (projetoAberto) {
+    return <ProjetoDetalhe projetoId={projetoAberto} token={props.token} usuario={props.usuario} onVoltar={function () { setProjetoAberto(null); carregar(); }} />;
+  }
 
   return (
     <div>
-      <header>
-        <div>
-          <strong>PIVOT Deal Manager WEB</strong>
-          <div className="who">{props.usuario.nome} &middot; {props.usuario.email} &middot; nivel: {props.usuario.nivel} &middot; escopo: {escopo || '-'}</div>
-        </div>
-        <button className="ghost" onClick={props.onLogout}>Sair</button>
-      </header>
-      <main>
+      {erro ? <div className="err">{erro}</div> : null}
+      <div className="kpis">
+        <div className="kpi"><span>Total de projetos</span><strong>{kpis ? kpis.total : '-'}</strong></div>
+        <div className="kpi"><span>Em negociação</span><strong>{kpis ? kpis.em_negociacao : '-'}</strong></div>
+        <div className="kpi"><span>Aprovados</span><strong>{kpis ? kpis.aprovados : '-'}</strong></div>
+        <div className="kpi"><span>Pivôs</span><strong>{kpis ? kpis.qtde_pivos : '-'}</strong></div>
+        <div className="kpi"><span>Área total</span><strong>{kpis ? numero(kpis.area_total_ha, 1) + ' ha' : '-'}</strong></div>
+        <div className="kpi"><span>Valor total</span><strong>{kpis ? brl(kpis.valor_total) : '-'}</strong></div>
+      </div>
+
+      <NovoProjeto token={props.token} onChange={carregar} />
+
+      <div className="panel">
+        <h2>Projetos ({projetos.length}) &middot; <span className="muted">escopo: {escopo || '-'}</span></h2>
+        <table>
+          <thead>
+            <tr><th>Cliente</th><th>Local</th><th>Vendedor</th><th>Status</th><th>Ações</th></tr>
+          </thead>
+          <tbody>
+            {projetos.map(function (p) {
+              return (
+                <tr key={p.id} className="clicavel" onClick={function () { setProjetoAberto(p.id); }}>
+                  <td>{p.cliente}</td>
+                  <td>{p.municipio ? p.municipio + '/' : ''}{p.estado || '-'}</td>
+                  <td>{p.vendedor_nome || '-'}</td>
+                  <td><span className={'tag ' + p.status}>{p.status}</span></td>
+                  <td>
+                    {props.usuario.nivel === 'diretor' ? <button className="mini ghost" onClick={function (ev) { excluir(p.id, ev); }}>Excluir</button> : null}
+                  </td>
+                </tr>
+              );
+            })}
+            {projetos.length === 0 ? <tr><td colSpan={5} className="muted">Nenhum projeto no seu escopo.</td></tr> : null}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function AdminUsuarios(props) {
+  const [usuarios, setUsuarios] = useState([]);
+  const [erro, setErro] = useState(null);
+
+  useEffect(function () {
+    api('/usuarios', {}, props.token).then(setUsuarios).catch(function (e) { setErro(e.message); });
+  }, [props.token]);
+
+  return (
+    <div className="panel">
+      <h2>Usuários ({usuarios.length})</h2>
+      {erro ? <div className="err">{erro}</div> : null}
+      <table>
+        <thead><tr><th>Nome</th><th>E-mail</th><th>Nível</th><th>Região</th></tr></thead>
+        <tbody>
+          {usuarios.map(function (u) {
+            return <tr key={u.id}><td>{u.nome}</td><td>{u.email}</td><td>{u.nivel}</td><td>{u.regiao || '-'}</td></tr>;
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AdminConfigFiscal(props) {
+  const [estados, setEstados] = useState([]);
+  const [globais, setGlobais] = useState([]);
+  const [erro, setErro] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const carregar = useCallback(function () {
+    api('/config/fiscal', {}, props.token).then(function (d) { setEstados(d.estados); setGlobais(d.globais); }).catch(function (e) { setErro(e.message); });
+  }, [props.token]);
+
+  useEffect(function () { carregar(); }, [carregar]);
+
+  function salvarEstado(estado, valor) {
+    api('/config/fiscal/' + estado, { method: 'PUT', body: JSON.stringify({ icms_pct: Number(valor) }) }, props.token)
+      .then(function () { setMsg(estado + ' atualizado.'); carregar(); })
+      .catch(function (e) { setErro(e.message); });
+  }
+  function salvarGlobal(chave, valor) {
+    api('/config/global/' + chave, { method: 'PUT', body: JSON.stringify({ valor: Number(valor) }) }, props.token)
+      .then(function () { setMsg(chave + ' atualizado.'); carregar(); })
+      .catch(function (e) { setErro(e.message); });
+  }
+
+  return (
+    <div>
+      <div className="panel">
+        <h2>Constantes globais (fórmula de desconto)</h2>
         {erro ? <div className="err">{erro}</div> : null}
-        <div className="kpis">
-          <div className="kpi"><span>Total de projetos</span><strong>{kpis ? kpis.total : '-'}</strong></div>
-          <div className="kpi"><span>Em negociacao</span><strong>{kpis ? kpis.em_negociacao : '-'}</strong></div>
-          <div className="kpi"><span>Aprovados</span><strong>{kpis ? kpis.aprovados : '-'}</strong></div>
-          <div className="kpi"><span>Valor total</span><strong>{kpis ? brl(kpis.valor_total) : '-'}</strong></div>
-          <div className="kpi"><span>Margem media</span><strong>{kpis ? kpis.margem_media + '%' : '-'}</strong></div>
-        </div>
+        {msg ? <div className="ok">{msg}</div> : null}
+        <table>
+          <thead><tr><th>Chave</th><th>Descrição</th><th>Valor</th></tr></thead>
+          <tbody>
+            {globais.map(function (g) {
+              return (
+                <tr key={g.chave}>
+                  <td>{g.chave}</td>
+                  <td className="muted">{g.descricao}</td>
+                  <td>
+                    <div className="row">
+                      <input className="desconto-input" type="number" step="0.01" defaultValue={g.valor} id={'glob-' + g.chave} />
+                      <button className="mini ghost" onClick={function () { salvarGlobal(g.chave, document.getElementById('glob-' + g.chave).value); }}>Salvar</button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="panel">
+        <h2>Tabela de desconto (ICMS por estado)</h2>
+        <table>
+          <thead><tr><th>Estado</th><th>ICMS %</th></tr></thead>
+          <tbody>
+            {estados.map(function (e) {
+              return (
+                <tr key={e.estado}>
+                  <td>{e.estado}</td>
+                  <td>
+                    <div className="row">
+                      <input className="desconto-input" type="number" step="0.1" defaultValue={e.icms_pct} id={'icms-' + e.estado} />
+                      <button className="mini ghost" onClick={function () { salvarEstado(e.estado, document.getElementById('icms-' + e.estado).value); }}>Salvar</button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
-        {podeCriar ? <NovoProjeto token={props.token} onChange={carregar} /> : null}
-
-        <div className="panel">
-          <h2>Projetos ({projetos.length})</h2>
-          <table>
-            <thead>
-              <tr><th>Cliente</th><th>Vendedor</th><th>Valor</th><th>Custo</th><th>Status</th>{podeAprovar ? <th>Acoes</th> : null}</tr>
-            </thead>
-            <tbody>
-              {projetos.map(function (p) {
-                return (
-                  <tr key={p.id}>
-                    <td>{p.cliente}</td>
-                    <td>{p.vendedor_nome || '-'}</td>
-                    <td>{brl(p.valor)}</td>
-                    <td>{brl(p.custo)}</td>
-                    <td><span className={'tag ' + p.status}>{p.status}</span></td>
-                    {podeAprovar ? (
-                      <td>
-                        <div className="row">
-                          <button className="mini" onClick={function () { decidir(p.id, 'aprovado'); }}>Aprovar</button>
-                          <button className="mini ghost" onClick={function () { decidir(p.id, 'reprovado'); }}>Reprovar</button>
-                          {props.usuario.nivel === 'diretor' ? <button className="mini ghost" onClick={function () { excluir(p.id); }}>Excluir</button> : null}
-                        </div>
-                      </td>
-                    ) : null}
-                  </tr>
-                );
-              })}
-              {projetos.length === 0 ? <tr><td colSpan={podeAprovar ? 6 : 5} className="muted">Nenhum projeto no seu escopo.</td></tr> : null}
-            </tbody>
-          </table>
-        </div>
-
-        {usuarios.length > 0 ? (
-          <div className="panel">
-            <h2>Usuarios no seu escopo ({usuarios.length})</h2>
-            <table>
-              <thead><tr><th>Nome</th><th>E-mail</th><th>Nivel</th></tr></thead>
-              <tbody>
-                {usuarios.map(function (u) {
-                  return <tr key={u.id}><td>{u.nome}</td><td>{u.email}</td><td>{u.nivel}</td></tr>;
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </main>
+function Admin(props) {
+  return (
+    <div>
+      <AdminUsuarios token={props.token} />
+      <AdminConfigFiscal token={props.token} />
     </div>
   );
 }
@@ -233,6 +414,7 @@ function Dashboard(props) {
 function App() {
   const [token, setToken] = useState(null);
   const [usuario, setUsuario] = useState(null);
+  const [tela, setTela] = useState('dashboard');
 
   useEffect(function () {
     const t = localStorage.getItem('pivot_token');
@@ -253,7 +435,29 @@ function App() {
   }
 
   if (!token || !usuario) return <Login onLogin={onLogin} />;
-  return <Dashboard token={token} usuario={usuario} onLogout={onLogout} />;
+
+  const podeAdmin = usuario.nivel === 'gerente' || usuario.nivel === 'diretor';
+
+  return (
+    <div>
+      <header>
+        <div>
+          <strong>PIVOT Deal Manager WEB</strong>
+          <div className="who">{usuario.nome} &middot; {usuario.email} &middot; nivel: {usuario.nivel}</div>
+        </div>
+        <div className="row">
+          <nav className="tabs">
+            <button className={tela === 'dashboard' ? 'ativo' : ''} onClick={function () { setTela('dashboard'); }}>Dashboard</button>
+            {podeAdmin ? <button className={tela === 'admin' ? 'ativo' : ''} onClick={function () { setTela('admin'); }}>Admin</button> : null}
+          </nav>
+          <button className="ghost" onClick={onLogout}>Sair</button>
+        </div>
+      </header>
+      <main>
+        {tela === 'admin' && podeAdmin ? <Admin token={token} /> : <Dashboard token={token} usuario={usuario} />}
+      </main>
+    </div>
+  );
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
