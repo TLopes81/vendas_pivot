@@ -495,7 +495,7 @@ function LinhaPivo(props) {
   return (
     <React.Fragment>
       <tr>
-        <td>{piv.numero_pivo}</td>
+        <td>{piv.numero_pivo}{piv.propriedade ? <div className="muted" style={{ fontSize: '11px' }}>{piv.propriedade}</div> : null}</td>
         <td>{piv.composicao}</td>
         <td>{numero(piv.area_irrigada_ha, 1)} ha</td>
         {editando ? (
@@ -514,7 +514,7 @@ function LinhaPivo(props) {
           <td colSpan={2}>
             <div className="row">
               <span>Enc. {piv.encargos_pct}% &middot; Desc. {piv.desconto_pct}% &middot; Flat {piv.taxa_flat_pct}% &middot; Mont. {brl(piv.montagem)} &middot; Serv. {brl(piv.servicos_adicionais)}</span>
-              {props.podeEditar ? <button className="mini ghost" onClick={function () { setEditando(true); }}>Editar</button> : null}
+              {props.podeEditar ? <button className="mini ghost" title="Editar parâmetros comerciais" onClick={function () { setEditando(true); }}>✏️</button> : null}
             </div>
           </td>
         )}

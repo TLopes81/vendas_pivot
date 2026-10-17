@@ -308,8 +308,15 @@ app.post('/pivos', auth, async (req, res) => {
     if (!b.projeto_id || !b.numero_pivo) return res.status(400).json({ erro: 'Informe projeto_id e numero_pivo' });
     if (!(await possoAcessarProjeto(req.usuario, b.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
 
-    const existente = must(await supabase.from('pivos').select('*')
-      .eq('projeto_id', b.projeto_id).eq('numero_pivo', b.numero_pivo).maybeSingle());
+    // O numero do pivo (PC 05, PC 06...) sozinho NAO identifica um pivo
+    // dentro do projeto -- um mesmo cliente pode ter mais de uma fazenda, e
+    // cada fazenda numera os pivos de forma independente (PC 06 na Fazenda A
+    // e PC 06 na Fazenda B sao pivos diferentes, nao versoes um do outro).
+    // A identidade real e numero_pivo + propriedade (fazenda).
+    const norm = function (s) { return String(s || '').trim().toUpperCase(); };
+    const candidatos = must(await supabase.from('pivos').select('*')
+      .eq('projeto_id', b.projeto_id).eq('numero_pivo', b.numero_pivo));
+    const existente = candidatos.find(function (c) { return norm(c.propriedade) === norm(b.propriedade); }) || null;
 
     const { icmsPct, pisPct, descRevendaPct } = await getConstantesFiscais(b.estado || (must(await supabase.from('projetos').select('estado').eq('id', b.projeto_id).maybeSingle()) || {}).estado);
 
