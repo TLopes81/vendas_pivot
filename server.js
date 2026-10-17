@@ -200,6 +200,67 @@ app.put('/config/global/:chave', auth, exigirNivel('gerente', 'diretor'), async 
   }
 });
 
+// Quem o usuario logado pode escolher como destinatario ao enviar um arquivo:
+// vendedor -> seu gerente + o diretor; gerente -> o diretor; diretor -> ninguem.
+app.get('/usuarios/destinatarios', auth, async (req, res) => {
+  try {
+    const ids = [];
+    if (req.usuario.nivel === 'vendedor' || req.usuario.nivel === 'gerente') {
+      const eu = must(await supabase.from('usuarios').select('superior_id').eq('id', req.usuario.id).maybeSingle());
+      if (eu && eu.superior_id) {
+        ids.push(eu.superior_id);
+        if (req.usuario.nivel === 'vendedor') {
+          const gerente = must(await supabase.from('usuarios').select('superior_id').eq('id', eu.superior_id).maybeSingle());
+          if (gerente && gerente.superior_id) ids.push(gerente.superior_id);
+        }
+      }
+    }
+    if (ids.length === 0) return res.json([]);
+    const rows = must(await supabase.from('usuarios').select('id,nome,email,nivel').in('id', ids));
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
+// Arquivos pendentes de aceite pelo usuario logado (ele e o destinatario)
+app.get('/arquivos/pendentes', auth, async (req, res) => {
+  try {
+    const rows = must(await supabase.from('arquivos')
+      .select('*, projetos(cliente,estado,municipio,fazenda)')
+      .eq('destinatario_id', req.usuario.id)
+      .eq('status', 'pendente')
+      .order('created_at'));
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
+app.put('/arquivos/:id/aceitar', auth, async (req, res) => {
+  try {
+    const a = must(await supabase.from('arquivos').select('*').eq('id', req.params.id).maybeSingle());
+    if (!a) return res.status(404).json({ erro: 'Arquivo nao encontrado' });
+    if (a.destinatario_id !== req.usuario.id) return res.status(403).json({ erro: 'Este arquivo nao foi enviado para voce' });
+    const row = must(await supabase.from('arquivos').update({ status: 'aceito', aceito_em: new Date().toISOString() }).eq('id', a.id).select().single());
+    res.json(row);
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
+app.put('/arquivos/:id/recusar', auth, async (req, res) => {
+  try {
+    const a = must(await supabase.from('arquivos').select('*').eq('id', req.params.id).maybeSingle());
+    if (!a) return res.status(404).json({ erro: 'Arquivo nao encontrado' });
+    if (a.destinatario_id !== req.usuario.id) return res.status(403).json({ erro: 'Este arquivo nao foi enviado para voce' });
+    const row = must(await supabase.from('arquivos').update({ status: 'recusado' }).eq('id', a.id).select().single());
+    res.json(row);
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
 // ---------- PIVOS ----------
 app.get('/pivos', auth, async (req, res) => {
   try {
@@ -270,15 +331,19 @@ app.put('/pivos/:id/desconto', auth, async (req, res) => {
     const desconto_pct = b.desconto_pct != null ? Number(b.desconto_pct) : p.desconto_pct;
     const encargos_pct = b.encargos_pct != null ? Number(b.encargos_pct) : p.encargos_pct;
     const taxa_flat_pct = b.taxa_flat_pct != null ? Number(b.taxa_flat_pct) : p.taxa_flat_pct;
+    const montagem = b.montagem != null ? Number(b.montagem) : p.montagem;
+    const servicos_adicionais = b.servicos_adicionais != null ? Number(b.servicos_adicionais) : p.servicos_adicionais;
 
     const { icmsPct, pisPct, descRevendaPct } = await getConstantesFiscais(p.estado);
-    const atualizado = Object.assign({}, p, { desconto_pct, encargos_pct, taxa_flat_pct });
+    const atualizado = Object.assign({}, p, { desconto_pct, encargos_pct, taxa_flat_pct, montagem, servicos_adicionais });
     const calc = recalcularValorNegociado(atualizado, icmsPct, pisPct, descRevendaPct);
 
     const novo = must(await supabase.from('pivos').update({
       desconto_pct: desconto_pct,
       encargos_pct: encargos_pct,
       taxa_flat_pct: taxa_flat_pct,
+      montagem: montagem,
+      servicos_adicionais: servicos_adicionais,
       valor_negociado: calc.valorNegociado,
       custo_por_hectare: calc.custoPorHectare,
       pct_ancillary: calc.pctAncillary,
@@ -453,13 +518,18 @@ app.post('/arquivos', auth, upload.single('arquivo'), async (req, res) => {
 
     const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(caminhoStorage);
 
+    const tipo = ['pivo', 'calculadora', 'outro'].indexOf(req.body.tipo) !== -1 ? req.body.tipo : 'pivo';
     const row = must(await supabase.from('arquivos').insert({
       projeto_id: projetoId,
+      pivo_id: req.body.pivo_id || null,
+      tipo: tipo,
       nome: req.file.originalname,
       caminho: pub.publicUrl,
       tamanho: req.file.size,
       mimetype: req.file.mimetype,
-      enviado_por: req.usuario.id
+      enviado_por: req.usuario.id,
+      destinatario_id: req.body.destinatario_id || null,
+      status: req.body.destinatario_id ? 'pendente' : 'aceito'
     }).select().single());
     res.status(201).json(row);
   } catch (e) {
