@@ -252,6 +252,7 @@ function Login(props) {
 // local escolhida pelo usuario (perguntada na primeira vez, com
 // versionamento automatico caso o arquivo ja exista).
 function NovoProjeto(props) {
+  const inputRef = React.useRef(null);
   const [status, setStatus] = useState(null);
   const [erro, setErro] = useState(null);
   const [enviando, setEnviando] = useState(false);
@@ -322,20 +323,24 @@ function NovoProjeto(props) {
   }
 
   return (
-    <div className="panel">
-      <h2>Novo projeto</h2>
-      <p className="muted" style={{ marginTop: '-6px' }}>
-        Selecione a(s) planilha(s) de pivô (.xlsb) do cliente. O sistema extrai automaticamente os dados do cliente, técnicos e monetários, cria o projeto e organiza os arquivos na pasta local.
-      </p>
-      {!SUPORTA_PASTA_LOCAL ? (
-        <p className="muted">Este navegador não organiza a pasta local automaticamente (use Chrome/Edge). Os dados ainda serão extraídos e enviados normalmente.</p>
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        title="Novo projeto -- selecionar planilha(s) de pivô (.xlsb)"
+        disabled={enviando}
+        onClick={function () { inputRef.current.click(); }}
+        style={{ fontSize: '22px', fontWeight: '700', width: '42px', height: '42px', padding: 0, lineHeight: '1' }}
+      >
+        {enviando ? '…' : '+'}
+      </button>
+      <input ref={inputRef} type="file" accept=".xlsb" multiple style={{ display: 'none' }} onChange={aoSelecionarArquivos} />
+      {(status || erro) ? (
+        <div className="card" style={{ position: 'absolute', right: 0, top: '50px', zIndex: 10, width: '280px', padding: '14px' }}>
+          <p className="muted" style={{ margin: '0 0 6px', fontWeight: '600' }}>Novo projeto</p>
+          {!SUPORTA_PASTA_LOCAL ? <p className="muted" style={{ margin: '0 0 6px' }}>Este navegador não organiza a pasta local automaticamente (use Chrome/Edge).</p> : null}
+          {status ? <p className="muted" style={{ margin: 0 }}>{status}</p> : null}
+          {erro ? <div className="err" style={{ margin: 0 }}>{erro}</div> : null}
+        </div>
       ) : null}
-      <div className="row">
-        <input type="file" accept=".xlsb" multiple onChange={aoSelecionarArquivos} disabled={enviando} />
-        {enviando ? <span className="muted">Processando...</span> : null}
-      </div>
-      {status ? <p className="muted" style={{ marginTop: '10px' }}>{status}</p> : null}
-      {erro ? <div className="err" style={{ marginTop: '10px' }}>{erro}</div> : null}
     </div>
   );
 }
