@@ -1,10 +1,16 @@
 {
   "rewrites": [
-    { "source": "/api/auth", "destination": "/api/auth" },
-    { "source": "/login", "destination": "/public/login.html" },
-    { "source": "/dashboard", "destination": "/public/dashboard.html" },
-    { "source": "/arquivos", "destination": "/public/arquivos.html" },
-    { "source": "/orcamento", "destination": "/public/orcamento.html" },
-    { "source": "/", "destination": "/public/login.html" }
+    { "source": "/login", "destination": "/api/index" },
+    { "source": "/logout", "destination": "/api/index" },
+    { "source": "/me", "destination": "/api/index" },
+    { "source": "/usuarios", "destination": "/api/index" },
+    { "source": "/usuarios/:path*", "destination": "/api/index" },
+    { "source": "/projetos", "destination": "/api/index" },
+    { "source": "/projetos/:path*", "destination": "/api/index" },
+    { "source": "/arquivos", "destination": "/api/index" },
+    { "source": "/arquivos/:path*", "destination": "/api/index" },
+    { "source": "/aprovacoes", "destination": "/api/index" },
+    { "source": "/dashboard", "destination": "/api/index" },
+    { "source": "/health", "destination": "/api/index" }
   ]
 }
