@@ -565,6 +565,20 @@ app.delete('/projetos/:id', auth, exigirNivel('diretor'), async (req, res) => {
 // ---------- ARQUIVOS (Supabase Storage) ----------
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
+// O busboy (usado pelo multer) decodifica o header multipart do nome do
+// arquivo como latin1 por padrao -- um nome com acentuacao UTF-8 (ex.
+// "URUAÇU.xlsb") chega corrompido ("URUAÃ...") se nao reinterpretarmos.
+function corrigirNomeArquivo(nome) {
+  try { return Buffer.from(nome, 'latin1').toString('utf8'); } catch (e) { return nome; }
+}
+// A CHAVE de armazenamento no Supabase Storage (diferente do nome exibido)
+// so aceita um conjunto restrito de caracteres -- espaco e acento geram
+// "Invalid key". Sanitiza so a chave; o nome original (acentuado, com
+// espacos) continua intacto no campo `nome` pra exibicao/download.
+function slugArquivo(nome) {
+  return String(nome).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9._-]+/g, '_');
+}
+
 app.post('/arquivos', auth, upload.single('arquivo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ erro: 'Nenhum arquivo enviado' });
@@ -573,7 +587,8 @@ app.post('/arquivos', auth, upload.single('arquivo'), async (req, res) => {
     if (!p) return res.status(404).json({ erro: 'Projeto nao encontrado' });
     if (!(await possoAcessarProjeto(req.usuario, projetoId))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
 
-    const caminhoStorage = projetoId + '/' + Date.now() + '-' + req.file.originalname;
+    const nomeOriginal = corrigirNomeArquivo(req.file.originalname);
+    const caminhoStorage = projetoId + '/' + Date.now() + '-' + slugArquivo(nomeOriginal);
     const { error: upErr } = await supabase.storage.from(BUCKET).upload(caminhoStorage, req.file.buffer, {
       contentType: req.file.mimetype,
       upsert: true
@@ -587,7 +602,7 @@ app.post('/arquivos', auth, upload.single('arquivo'), async (req, res) => {
       projeto_id: projetoId,
       pivo_id: req.body.pivo_id || null,
       tipo: tipo,
-      nome: req.file.originalname,
+      nome: nomeOriginal,
       caminho: pub.publicUrl,
       tamanho: req.file.size,
       mimetype: req.file.mimetype,
