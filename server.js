@@ -871,8 +871,14 @@ app.post('/arquivos', auth, upload.single('arquivo'), async (req, res) => {
     });
     if (upErr) throw upErr;
 
-    const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(caminhoStorage);
-
+    // Regra do sistema: o arquivo nao e um link publico de nuvem que
+    // qualquer um com acesso ao projeto pode baixar -- ele fica "local" (so
+    // quem enviou tem acesso direto) e so passa a existir para outra pessoa
+    // quando ela e o destinatario escolhido E aceita o envio (ver GET
+    // /arquivos e /arquivos/:id/link abaixo). Por isso nao usamos mais
+    // getPublicUrl -- guardamos so o caminho dentro do bucket, e o download
+    // sempre passa por um link assinado de curta duracao, gerado so depois
+    // de validar que quem esta pedindo pode mesmo ver este arquivo.
     const tipo = ['pivo', 'calculadora', 'outro', 'item_adicional'].indexOf(req.body.tipo) !== -1 ? req.body.tipo : 'pivo';
     const row = must(await supabase.from('arquivos').insert({
       projeto_id: projetoId,
@@ -880,7 +886,7 @@ app.post('/arquivos', auth, upload.single('arquivo'), async (req, res) => {
       item_adicional_id: req.body.item_adicional_id || null,
       tipo: tipo,
       nome: nomeOriginal,
-      caminho: pub.publicUrl,
+      caminho_storage: caminhoStorage,
       tamanho: req.file.size,
       mimetype: req.file.mimetype,
       enviado_por: req.usuario.id,
@@ -893,12 +899,47 @@ app.post('/arquivos', auth, upload.single('arquivo'), async (req, res) => {
   }
 });
 
+// So retorna os arquivos que o usuario logado tem o direito de ver: os que
+// ele mesmo enviou, ou os que foram enviados PRA ele e ele ja aceitou. Ver
+// acima a mesma regra -- acesso ao projeto (possoAcessarProjeto) mostra os
+// dados/numeros do projeto, mas NAO da acesso automatico aos arquivos de
+// quem nao enviou ou nao recebeu.
 app.get('/arquivos', auth, async (req, res) => {
   try {
     if (!req.query.projeto_id) return res.status(400).json({ erro: 'Informe projeto_id' });
     if (!(await possoAcessarProjeto(req.usuario, req.query.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
-    const rows = must(await supabase.from('arquivos').select('id,projeto_id,pivo_id,tipo,nome,caminho,tamanho,mimetype,created_at').eq('projeto_id', req.query.projeto_id).order('created_at', { ascending: false }));
-    res.json(rows);
+    const rows = must(await supabase.from('arquivos').select('id,projeto_id,pivo_id,tipo,nome,tamanho,mimetype,enviado_por,destinatario_id,status,created_at').eq('projeto_id', req.query.projeto_id).order('created_at', { ascending: false }));
+    const meuId = req.usuario.id;
+    const visiveis = rows.filter(function (a) {
+      return a.enviado_por === meuId || (a.destinatario_id === meuId && a.status === 'aceito');
+    });
+    res.json(visiveis);
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
+// Gera um link de download de curta duracao (120s) -- so depois de
+// confirmar que quem pediu enviou o arquivo ou e o destinatario que ja
+// aceitou. Para arquivos antigos (de antes desta migracao, sem
+// caminho_storage), cai de volta no link publico que ja existia.
+app.get('/arquivos/:id/link', auth, async (req, res) => {
+  try {
+    const a = must(await supabase.from('arquivos').select('*').eq('id', req.params.id).maybeSingle());
+    if (!a) return res.status(404).json({ erro: 'Arquivo nao encontrado' });
+    const souQuemEnviou = a.enviado_por === req.usuario.id;
+    // Pendente OU aceito: o destinatario precisa poder baixar/conferir o
+    // arquivo no momento de decidir aceitar ou recusar, nao so depois.
+    const souODestinatario = a.destinatario_id === req.usuario.id && (a.status === 'pendente' || a.status === 'aceito');
+    if (!souQuemEnviou && !souODestinatario) return res.status(403).json({ erro: 'Este arquivo nao foi compartilhado com voce' });
+    if (!(await possoAcessarProjeto(req.usuario, a.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
+    if (!a.caminho_storage) {
+      if (a.caminho) return res.json({ url: a.caminho });
+      return res.status(404).json({ erro: 'Arquivo sem conteudo associado' });
+    }
+    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(a.caminho_storage, 120);
+    if (error) throw error;
+    res.json({ url: data.signedUrl });
   } catch (e) {
     res.status(500).json({ erro: String((e && e.message) || e) });
   }

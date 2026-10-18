@@ -163,7 +163,8 @@ create table arquivos (
   pivo_id uuid references pivos(id) on delete cascade,
   item_adicional_id uuid references itens_adicionais(id) on delete cascade,
   nome text,
-  caminho text,
+  caminho text,               -- legado: URL publica (arquivos de antes da migracao caminho_storage)
+  caminho_storage text,       -- caminho dentro do bucket privado; link de download e sempre assinado/temporario
   tipo text default 'pivo' check (tipo in ('pivo','calculadora','outro','item_adicional')),
   tamanho bigint,
   mimetype text,
