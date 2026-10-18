@@ -207,7 +207,37 @@ const MAPA_PROPOSTA = {
   modelo: [6, 9], marca: [6, 11], composicao: [7, 5],
 };
 const MAPA_TOTAIS = { preco_total: [260, 28], preco_parte_aerea: [259, 28], montagem: [260, 26], servicos_adicionais: [260, 27] };
-const MAPA_FICHA = { area_irrigada_ha: [23, 9] };
+const MAPA_FICHA = {
+  area_irrigada_ha: [23, 9],
+  potencia_motobomba_cv: [6, 94],
+  perda_carga_parte_aerea_mca: [10, 23],
+  bomba_nome: [46, 5],
+  bomba_eficiencia_pct: [50, 5],
+};
+// Trechos da tubulacao adutora (tabela "Tubulacao Adutora", linhas 37-41 na
+// FICHA_TECNICA): coluna 3 = comprimento (m), coluna 4 = diametro interno
+// (mm), coluna 8 = material com classe de pressao embutida (ex "PVC 300/125"
+// = DN300 PN125). Coordenadas validadas por soma manual contra o total de
+// "perda fric. adutora" da propria planilha.
+function extrairAdutora(ficha) {
+  const trechos = [];
+  for (let r = 37; r <= 41; r++) {
+    const comprimento = lerCelula(ficha, r, 3);
+    if (!comprimento || Number(comprimento) <= 0) continue;
+    const material = lerCelula(ficha, r, 8);
+    const partes = String(material || '').trim().split('/');
+    const pn = partes.length > 1 ? partes[1].trim() : null;
+    const dn = partes.length > 0 ? (partes[0].match(/(\d+)/) || [])[1] : null;
+    trechos.push({
+      comprimento_m: Number(comprimento),
+      diametro_mm: Number(lerCelula(ficha, r, 4)) || null,
+      diametro_nominal_mm: dn ? Number(dn) : null,
+      pn: pn,
+      material: material || null,
+    });
+  }
+  return trechos;
+}
 
 function lerCelula(sheet, r, c) {
   const addr = XLSX.utils.encode_cell({ r: r, c: c });
@@ -223,7 +253,12 @@ function extrairPivoDoArrayBuffer(arrayBuffer, nomeArquivo) {
   const dado = {};
   Object.keys(MAPA_PROPOSTA).forEach(function (k) { dado[k] = lerCelula(proposta, MAPA_PROPOSTA[k][0], MAPA_PROPOSTA[k][1]); });
   Object.keys(MAPA_TOTAIS).forEach(function (k) { dado[k] = lerCelula(proposta, MAPA_TOTAIS[k][0], MAPA_TOTAIS[k][1]) || 0; });
-  if (ficha) Object.keys(MAPA_FICHA).forEach(function (k) { dado[k] = lerCelula(ficha, MAPA_FICHA[k][0], MAPA_FICHA[k][1]); });
+  if (ficha) {
+    Object.keys(MAPA_FICHA).forEach(function (k) { dado[k] = lerCelula(ficha, MAPA_FICHA[k][0], MAPA_FICHA[k][1]); });
+    dado.adutora_trechos = extrairAdutora(ficha);
+  } else {
+    dado.adutora_trechos = [];
+  }
 
   const m = nomeArquivo.match(/PC[\s_-]*0*(\d+)/i);
   dado.numero_pivo = m ? ('PC ' + String(m[1]).padStart(2, '0')) : String(dado.pivo_opcao || '').trim();
@@ -570,6 +605,77 @@ function LinhaPivo(props) {
 // apresentacao comercial em PDF). Botao "Imprimir / Baixar PDF" usa o
 // dialogo de impressao do navegador, restrito a esta area (ver @media
 // print no <style>), sem precisar de nenhuma biblioteca nova.
+// Painel interno de engenharia da negociacao -- nao entra na proposta
+// impressa pro cliente (essa fica em ResumoComercial, abaixo). Agrega os
+// dados tecnicos de TODOS os pivos do projeto: potencia, perda de carga,
+// adutora por diametro/classe de pressao e as bombas usadas.
+function ResumoTecnico(props) {
+  const r = props.resumo;
+  if (!r) return null;
+  const temAdutora = r.adutora_agregada && r.adutora_agregada.length > 0;
+  const temBombas = r.bombas && r.bombas.length > 0;
+
+  return (
+    <div className="panel">
+      <h2>Resumo técnico da negociação</h2>
+      <p className="muted" style={{ marginTop: '-6px', marginBottom: '14px' }}>
+        Agregado automaticamente a partir dos {r.qtde_pivos} pivô{r.qtde_pivos === 1 ? '' : 's'} enviados -- sem digitação manual.
+      </p>
+
+      <div className="kpis">
+        <div className="kpi"><span>Área total irrigada</span><strong>{numero(r.area_total_ha, 1)} ha</strong></div>
+        <div className="kpi"><span>Total de pivôs</span><strong>{r.qtde_pivos}</strong></div>
+        <div className="kpi"><span>Área média / pivô</span><strong>{numero(r.area_media_por_pivo_ha, 1)} ha</strong></div>
+        <div className="kpi"><span>Potência total</span><strong>{numero(r.potencia_total_cv, 0)} CV</strong></div>
+        <div className="kpi"><span>Potência total</span><strong>{numero(r.potencia_total_kw, 0)} kW</strong></div>
+        <div className="kpi"><span>Perda de carga média (parte aérea)</span><strong>{r.perda_carga_parte_aerea_media_mca != null ? numero(r.perda_carga_parte_aerea_media_mca, 1) + ' mca' : '—'}</strong></div>
+      </div>
+
+      <div className="row" style={{ alignItems: 'flex-start', gap: '20px', marginTop: '18px', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 280px', minWidth: '260px' }}>
+          <p className="muted" style={{ fontWeight: 600, margin: '0 0 6px', color: '#3a3d42' }}>Adutora por diâmetro / classe de pressão</p>
+          {temAdutora ? (
+            <table>
+              <thead><tr><th>Diâmetro (DN)</th><th>Classe</th><th>Comprimento total</th></tr></thead>
+              <tbody>
+                {r.adutora_agregada.map(function (a, i) {
+                  return (
+                    <tr key={i}>
+                      <td>{a.diametro_nominal_mm ? a.diametro_nominal_mm + ' mm' : '—'}</td>
+                      <td>{a.pn ? 'PN' + a.pn : '—'}</td>
+                      <td>{numero(a.comprimento_total_m, 0)} m</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : <p className="muted">Sem dados de adutora extraídos ainda.</p>}
+        </div>
+
+        <div style={{ flex: '1 1 280px', minWidth: '260px' }}>
+          <p className="muted" style={{ fontWeight: 600, margin: '0 0 6px', color: '#3a3d42' }}>Bombas</p>
+          {temBombas ? (
+            <table>
+              <thead><tr><th>Modelo</th><th>Eficiência</th><th>Qtde de pivôs</th></tr></thead>
+              <tbody>
+                {r.bombas.map(function (b, i) {
+                  return (
+                    <tr key={i}>
+                      <td>{b.nome}</td>
+                      <td>{b.eficiencia_pct != null ? numero(b.eficiencia_pct, 0) + '%' : '—'}</td>
+                      <td>{b.qtde_pivos}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : <p className="muted">Sem dados de bomba extraídos ainda.</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ResumoComercial(props) {
   const p = props.projeto;
   const pivos = props.pivos;
@@ -732,6 +838,8 @@ function ProjetoDetalhe(props) {
           {r.qtde_pivos} pivô{r.qtde_pivos === 1 ? '' : 's'} &middot; {numero(r.area_total_ha, 1)} ha &middot; {brl(r.valor_total)} negociado &middot; {brl(r.custo_por_hectare_medio)}/ha
         </p>
       </div>
+
+      <ResumoTecnico resumo={r} />
 
       <ResumoComercial projeto={p} pivos={dados.pivos} resumo={r} />
 

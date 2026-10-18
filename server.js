@@ -330,6 +330,11 @@ app.post('/pivos', auth, async (req, res) => {
       marca: b.marca || null,
       modelo: b.modelo || null,
       area_irrigada_ha: b.area_irrigada_ha != null ? Number(b.area_irrigada_ha) : null,
+      potencia_motobomba_cv: b.potencia_motobomba_cv != null ? Number(b.potencia_motobomba_cv) : null,
+      perda_carga_parte_aerea_mca: b.perda_carga_parte_aerea_mca != null ? Number(b.perda_carga_parte_aerea_mca) : null,
+      bomba_nome: b.bomba_nome || null,
+      bomba_eficiencia_pct: b.bomba_eficiencia_pct != null ? Number(b.bomba_eficiencia_pct) : null,
+      adutora_trechos: Array.isArray(b.adutora_trechos) ? b.adutora_trechos : null,
       montagem: Number(b.montagem) || 0,
       servicos_adicionais: Number(b.servicos_adicionais) || 0,
       preco_total: Number(b.preco_total) || 0,
@@ -544,6 +549,32 @@ app.get('/projetos/:id/resumo', auth, async (req, res) => {
     const valorTotal = pivos.reduce(function (s, r) { return s + (Number(r.valor_negociado) || 0); }, 0);
     const areaTotal = pivos.reduce(function (s, r) { return s + (Number(r.area_irrigada_ha) || 0); }, 0);
     const vendedor = p.vendedor_id ? must(await supabase.from('usuarios').select('nome,email').eq('id', p.vendedor_id).maybeSingle()) : null;
+
+    // KPIs tecnicos agregados (pedido explicito: CV/kW total, adutora por
+    // diametro+PN, bombas com eficiencia, perda de carga da parte aerea).
+    const CV_PARA_KW = 0.735499;
+    const potenciaTotalCV = pivos.reduce(function (s, r) { return s + (Number(r.potencia_motobomba_cv) || 0); }, 0);
+    const perdasCarga = pivos.map(function (r) { return Number(r.perda_carga_parte_aerea_mca); }).filter(function (v) { return !isNaN(v) && v > 0; });
+    const perdaCargaMedia = perdasCarga.length ? perdasCarga.reduce(function (a, b) { return a + b; }, 0) / perdasCarga.length : null;
+
+    const adutoraMapa = {};
+    pivos.forEach(function (piv) {
+      (piv.adutora_trechos || []).forEach(function (t) {
+        const chave = (t.diametro_nominal_mm || t.diametro_mm || '-') + '|' + (t.pn || '-');
+        if (!adutoraMapa[chave]) adutoraMapa[chave] = { diametro_nominal_mm: t.diametro_nominal_mm || t.diametro_mm || null, pn: t.pn || null, comprimento_total_m: 0 };
+        adutoraMapa[chave].comprimento_total_m += Number(t.comprimento_m) || 0;
+      });
+    });
+    const adutoraAgregada = Object.values(adutoraMapa).sort(function (a, b) { return (b.diametro_nominal_mm || 0) - (a.diametro_nominal_mm || 0); });
+
+    const bombaMapa = {};
+    pivos.forEach(function (piv) {
+      if (!piv.bomba_nome) return;
+      if (!bombaMapa[piv.bomba_nome]) bombaMapa[piv.bomba_nome] = { nome: piv.bomba_nome, eficiencia_pct: piv.bomba_eficiencia_pct, qtde_pivos: 0 };
+      bombaMapa[piv.bomba_nome].qtde_pivos += 1;
+    });
+    const bombas = Object.values(bombaMapa);
+
     res.json({
       projeto: Object.assign({}, p, { vendedor_nome: vendedor ? vendedor.nome : null, vendedor_email: vendedor ? vendedor.email : null }),
       pivos: pivos,
@@ -551,7 +582,13 @@ app.get('/projetos/:id/resumo', auth, async (req, res) => {
         qtde_pivos: pivos.length,
         valor_total: valorTotal,
         area_total_ha: areaTotal,
-        custo_por_hectare_medio: areaTotal ? valorTotal / areaTotal : 0
+        area_media_por_pivo_ha: pivos.length ? areaTotal / pivos.length : 0,
+        custo_por_hectare_medio: areaTotal ? valorTotal / areaTotal : 0,
+        potencia_total_cv: potenciaTotalCV,
+        potencia_total_kw: potenciaTotalCV * CV_PARA_KW,
+        perda_carga_parte_aerea_media_mca: perdaCargaMedia,
+        adutora_agregada: adutoraAgregada,
+        bombas: bombas
       }
     });
   } catch (e) {

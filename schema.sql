@@ -59,6 +59,13 @@ create table pivos (
   modelo text,
   area_irrigada_ha numeric,          -- extraido da aba FICHA_TECNICA
 
+  -- KPIs tecnicos (extraidos da aba FICHA_TECNICA, coordenadas validadas)
+  potencia_motobomba_cv numeric,     -- "Potencia motobomba (CV)" linha 7 col 95
+  perda_carga_parte_aerea_mca numeric, -- "perda friccional no tubo Pivo" linha 11 col 24
+  bomba_nome text,                   -- ex "ETA 150-40"
+  bomba_eficiencia_pct numeric,      -- "rendimento" da bomba selecionada
+  adutora_trechos jsonb,             -- [{comprimento_m, diametro_mm, diametro_nominal_mm, pn, material}], tabela "Tubulacao Adutora"
+
   -- entradas editaveis (replicam a aba "Calculo" da Calculadora, colunas E-I)
   encargos_pct numeric default 10,
   desconto_pct numeric default 0,    -- "Desconto Pivo" -- o campo que o vendedor edita
