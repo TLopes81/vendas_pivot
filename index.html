@@ -57,11 +57,23 @@
   .tag.pendente { background:#ececed; color:#32323a; }
   .panel { background:#fff; border:1px solid var(--borda); border-radius:12px; padding:16px; margin-bottom:18px; }
   .panel h2 { margin:0 0 12px; font-size:15px; }
-  .cabecalho-projeto { position:sticky; top:0; z-index:5; }
+  .cabecalho-projeto { position:sticky; top:45px; z-index:5; }
   .cabecalho-projeto-topo { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; }
   .cabecalho-projeto-id h2 { margin:0 0 4px; font-size:19px; }
   .cabecalho-projeto-id p { margin:0; }
   .cabecalho-projeto-stats { margin-top:14px; padding-top:12px; border-top:1px solid var(--borda); font-size:13px; color:var(--texto-sutil); }
+  .barra-superior { display:flex; align-items:center; justify-content:space-between; padding:12px 28px; background:#fff; border-bottom:1px solid var(--borda); position:sticky; top:0; z-index:6; }
+  .barra-superior .breadcrumb { font-size:13px; color:var(--texto-sutil); }
+  .mestre-detalhe { display:grid; grid-template-columns:300px 1fr; gap:16px; align-items:start; }
+  @media (max-width:900px) { .mestre-detalhe { grid-template-columns:1fr; } }
+  .lista-pendencias { display:flex; flex-direction:column; gap:8px; }
+  .card-pendencia { display:block; width:100%; text-align:left; background:#fff; border:1px solid var(--borda); border-radius:10px; padding:12px 14px; cursor:pointer; height:auto; }
+  .card-pendencia:hover { border-color:#c7cad0; }
+  .card-pendencia.ativo { border-color:var(--vermelho); background:var(--vermelho-claro); }
+  .card-pendencia strong { display:block; font-size:13px; margin-bottom:3px; color:var(--preto); }
+  .card-pendencia span { font-size:12px; color:var(--texto-sutil); }
+  .painel-decisao { background:#fff; border:1px solid var(--borda); border-radius:12px; padding:22px; min-height:220px; }
+  .caixa-impacto { background:var(--cinza); border-radius:10px; padding:14px; font-size:13px; color:var(--texto-sutil); line-height:1.5; margin:4px 0 18px; }
   .muted { font-size:12px; color:var(--texto-sutil); }
   .campo-mini { width:76px; height:30px; padding:0 8px; text-align:right; }
   .campo-mini.campo-percentual { width:88px; }
@@ -138,7 +150,7 @@ const API = '';
 // verdade (F5/Ctrl+Shift+R), nunca so navegando dentro do app. Isso aqui e
 // o jeito de confirmar se uma tela esta mesmo na ultima versao publicada
 // antes de reportar algo como bug -- bump a cada deploy.
-const VERSAO_APP = '2026-10-18.9';
+const VERSAO_APP = '2026-10-18.10';
 
 function api(path, options, token) {
   const opts = options || {};
@@ -167,6 +179,12 @@ const SECOES_PROJETO = [
   { id: 'proposta', rotulo: 'Proposta', icone: 'documento' },
   { id: 'arquivos', rotulo: 'Arquivos', icone: 'pasta' },
 ];
+const ROTULO_TELA = {
+  dashboard: 'Dashboard geral',
+  projetos: 'Projetos',
+  pendentes: 'Pendentes',
+  admin: 'Organização / Usuários & fiscal',
+};
 function formatarStatus(status) { return ROTULOS_STATUS[status] || status; }
 
 const ROTULOS_TIPO_ITEM = { bombeamento: 'Bombeamento', pvc: 'PVC', cabos_eletricos: 'Cabos Elétricos', outro: 'Outro' };
@@ -2111,9 +2129,21 @@ function Pendentes(props) {
   const [lista, setLista] = useState([]);
   const [erro, setErro] = useState(null);
   const [status, setStatus] = useState(null);
+  const [selecionadoId, setSelecionadoId] = useState(null);
 
   const carregar = useCallback(function () {
-    api('/arquivos/pendentes', {}, props.token).then(setLista).catch(function (e) { setErro(e.message); });
+    api('/arquivos/pendentes', {}, props.token)
+      .then(function (d) {
+        setLista(d);
+        // Mantem a selecao se o item ainda existir; senao, cai no primeiro da
+        // lista -- assim resolver uma pendencia ja carrega a proxima sem
+        // precisar trocar de tela (atalho citado na propria tela).
+        setSelecionadoId(function (atual) {
+          if (atual && d.some(function (a) { return a.id === atual; })) return atual;
+          return d.length ? d[0].id : null;
+        });
+      })
+      .catch(function (e) { setErro(e.message); });
   }, [props.token]);
 
   useEffect(function () { carregar(); }, [carregar]);
@@ -2154,34 +2184,60 @@ function Pendentes(props) {
     api('/arquivos/' + a.id + '/recusar', { method: 'PUT' }, props.token).then(function () { carregar(); if (props.onMudouContagem) props.onMudouContagem(); }).catch(function (e) { setErro(e.message); });
   }
 
+  const selecionado = lista.filter(function (a) { return a.id === selecionadoId; })[0] || null;
+  const projSel = selecionado ? (selecionado.projetos || {}) : {};
+
   return (
-    <div className="panel">
-      <h2>Arquivos pendentes de aceite ({lista.length})</h2>
+    <div>
+      <h2 style={{ margin: '0 0 4px' }}>Pendências</h2>
+      <p className="muted" style={{ margin: '0 0 16px' }}>Resolva os arquivos aguardando seu aceite, um de cada vez.</p>
       {erro ? <div className="err">{erro}</div> : null}
-      {status ? <p className="muted">{status}</p> : null}
-      {!SUPORTA_PASTA_LOCAL ? <p className="muted">Este navegador não organiza a pasta local automaticamente (use Chrome/Edge) -- aceitar ainda marca o arquivo como aprovado.</p> : null}
-      <table>
-        <thead><tr><th>Arquivo</th><th>Projeto</th><th>Enviado em</th><th>Ações</th></tr></thead>
-        <tbody>
+      {!SUPORTA_PASTA_LOCAL ? <p className="muted" style={{ marginBottom: '12px' }}>Este navegador não organiza a pasta local automaticamente (use Chrome/Edge) -- aceitar ainda marca o arquivo como aprovado.</p> : null}
+
+      <div className="mestre-detalhe">
+        <div className="lista-pendencias">
           {lista.map(function (a) {
             const proj = a.projetos || {};
             return (
-              <tr key={a.id}>
-                <td>{a.nome}</td>
-                <td>{proj.cliente || '-'}</td>
-                <td className="muted">{new Date(a.created_at).toLocaleString('pt-BR')}</td>
-                <td>
-                  <div className="row">
-                    <button className="mini" onClick={function () { aceitar(a); }}>Aceitar</button>
-                    <button className="mini perigo" onClick={function () { recusar(a); }}>Recusar</button>
-                  </div>
-                </td>
-              </tr>
+              <button
+                key={a.id}
+                className={'card-pendencia' + (a.id === selecionadoId ? ' ativo' : '')}
+                onClick={function () { setSelecionadoId(a.id); }}
+              >
+                <strong>{a.nome}</strong>
+                <span>{proj.cliente || '-'} &middot; {new Date(a.created_at).toLocaleDateString('pt-BR')}</span>
+              </button>
             );
           })}
-          {lista.length === 0 ? <tr><td colSpan={4} className="muted">Nada pendente.</td></tr> : null}
-        </tbody>
-      </table>
+          {lista.length === 0 ? <p className="muted">Nada pendente.</p> : null}
+        </div>
+
+        <div className="painel-decisao">
+          {status ? <p className="muted" style={{ marginBottom: '14px' }}>{status}</p> : null}
+          {selecionado ? (
+            <React.Fragment>
+              <p className="muted" style={{ margin: '0 0 4px', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '.03em' }}>Arquivo recebido</p>
+              <h2 style={{ margin: '0 0 6px' }}>{selecionado.nome}</h2>
+              <p className="muted" style={{ margin: '0 0 16px' }}>
+                Projeto <strong style={{ color: 'var(--preto)' }}>{projSel.cliente || '-'}</strong> &middot; enviado em {new Date(selecionado.created_at).toLocaleString('pt-BR')}
+              </p>
+
+              <div className="caixa-impacto">
+                <strong style={{ display: 'block', marginBottom: '4px' }}>O que acontece em cada decisão</strong>
+                Se <strong>aceitar</strong>, o arquivo passa a ser seu também e fica disponível na aba Arquivos do projeto{SUPORTA_PASTA_LOCAL ? ', e tentamos salvar uma cópia na sua pasta local' : ''}.
+                Se <strong>recusar</strong>, o arquivo não é salvo e sai da sua lista de pendências -- quem enviou continua vendo o arquivo normalmente.
+              </div>
+
+              <div className="row">
+                <button onClick={function () { aceitar(selecionado); }}>Aceitar</button>
+                <button className="ghost" onClick={function () { recusar(selecionado); }}>Recusar</button>
+              </div>
+            </React.Fragment>
+          ) : (
+            <p className="muted">Nenhuma pendência selecionada.</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -2483,6 +2539,13 @@ function App() {
       {mostrarTrocarSenha ? <ModalTrocarSenha token={token} onFechar={function () { setMostrarTrocarSenha(false); }} /> : null}
 
       <div className="conteudo">
+        <div className="barra-superior">
+          <div className="breadcrumb">
+            {projetoAberto
+              ? 'Projetos / ' + (projetoAtual ? projetoAtual.cliente : '...') + ' / ' + (SECOES_PROJETO.filter(function (s) { return s.id === secaoProjeto; })[0] || {}).rotulo
+              : (ROTULO_TELA[tela] || 'Dashboard')}
+          </div>
+        </div>
         <main>
           {projetoAberto ? (
             <ProjetoDetalhe
