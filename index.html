@@ -78,6 +78,7 @@
   .sidebar nav.secao { margin-bottom:6px; }
   .sidebar nav.secao .titulo { font-size:10px; color:var(--sidebar-texto); text-transform:uppercase; letter-spacing:.07em; margin:14px 0 6px 10px; opacity:.75; }
   .sidebar .negociacao-nome { font-size:12px; font-weight:700; color:var(--sidebar-texto-forte); padding:0 10px; margin-bottom:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sidebar .negociacao-nome.vazia { font-weight:500; font-style:italic; color:var(--sidebar-texto); opacity:.75; }
   .sidebar nav.secao button {
     width:100%; text-align:left; background:none; border:0; color:var(--sidebar-texto); height:38px; padding:0 10px;
     border-radius:8px; font-size:13.5px; font-weight:500; display:flex; align-items:center; gap:10px; cursor:pointer;
@@ -85,6 +86,8 @@
   }
   .sidebar nav.secao button svg { flex-shrink:0; opacity:.85; }
   .sidebar nav.secao button:hover { background:var(--sidebar-hover); color:var(--sidebar-texto-forte); }
+  .sidebar nav.secao button:disabled { opacity:.3; cursor:default; }
+  .sidebar nav.secao button:disabled:hover { background:none; color:var(--sidebar-texto); }
   .sidebar nav.secao button.ativo { background:var(--sidebar-ativo); color:var(--sidebar-texto-forte); font-weight:700; position:relative; }
   .sidebar nav.secao button.ativo svg { opacity:1; color:#ff5a72; }
   .sidebar nav.secao button.ativo::before { content:''; position:absolute; left:-14px; top:6px; bottom:6px; width:3px; border-radius:3px; background:var(--vermelho); }
@@ -1812,19 +1815,24 @@ function App() {
           </nav>
         ) : null}
 
-        {projetoAberto ? (
-          <nav className="secao">
-            <p className="titulo">Negociação aberta</p>
-            <div className="negociacao-nome">{projetoAtual ? projetoAtual.cliente : 'Carregando...'}</div>
-            {SECOES_PROJETO.map(function (s) {
-              return (
-                <button key={s.id} className={secaoProjeto === s.id ? 'ativo' : ''} onClick={function () { setSecaoProjeto(s.id); }}>
-                  <Icone nome={s.icone} /> {s.rotulo}
-                </button>
-              );
-            })}
-          </nav>
-        ) : null}
+        <nav className="secao">
+          <p className="titulo">Negociação</p>
+          <div className={'negociacao-nome' + (projetoAberto ? '' : ' vazia')}>
+            {projetoAberto ? (projetoAtual ? projetoAtual.cliente : 'Carregando...') : 'Nenhuma negociação aberta'}
+          </div>
+          {SECOES_PROJETO.map(function (s) {
+            return (
+              <button
+                key={s.id}
+                className={projetoAberto && secaoProjeto === s.id ? 'ativo' : ''}
+                disabled={!projetoAberto}
+                onClick={function () { setSecaoProjeto(s.id); }}
+              >
+                <Icone nome={s.icone} /> {s.rotulo}
+              </button>
+            );
+          })}
+        </nav>
 
         <div className="perfil">
           <div className="avatar">{iniciais(usuario.nome)}</div>
