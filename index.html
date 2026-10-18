@@ -127,6 +127,11 @@
 <script type="text/babel">
 const { useState, useEffect, useCallback } = React;
 const API = '';
+// Marcador de versao -- SPA so busca codigo novo numa recarga de pagina de
+// verdade (F5/Ctrl+Shift+R), nunca so navegando dentro do app. Isso aqui e
+// o jeito de confirmar se uma tela esta mesmo na ultima versao publicada
+// antes de reportar algo como bug -- bump a cada deploy.
+const VERSAO_APP = '2026-10-18.5';
 
 function api(path, options, token) {
   const opts = options || {};
@@ -1516,6 +1521,96 @@ function ModalConfirmacao(props) {
   );
 }
 
+// Modal de troca da PROPRIA senha -- qualquer usuario logado, exige a
+// senha atual. (Reset de senha de OUTRO usuario, por gerente/diretor, fica
+// na tela Admin > Usuarios, ver BotaoRedefinirSenha abaixo.)
+function ModalTrocarSenha(props) {
+  const [senhaAtual, setSenhaAtual] = useState('');
+  const [senhaNova, setSenhaNova] = useState('');
+  const [confirmarNova, setConfirmarNova] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [erro, setErro] = useState(null);
+  const [ok, setOk] = useState(false);
+
+  function salvar() {
+    setErro(null);
+    if (senhaNova.length < 6) { setErro('A nova senha precisa ter pelo menos 6 caracteres.'); return; }
+    if (senhaNova !== confirmarNova) { setErro('As duas senhas novas não são iguais.'); return; }
+    setEnviando(true);
+    api('/me/senha', { method: 'PUT', body: JSON.stringify({ senha_atual: senhaAtual, senha_nova: senhaNova }) }, props.token)
+      .then(function () { setOk(true); })
+      .catch(function (e) { setErro(e.message); })
+      .then(function () { setEnviando(false); });
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(25,27,33,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+      onClick={function (ev) { ev.stopPropagation(); if (!enviando) props.onFechar(); }}
+    >
+      <div className="card" style={{ maxWidth: '360px' }} onClick={function (ev) { ev.stopPropagation(); }}>
+        <h1 style={{ fontSize: '16px' }}>Trocar minha senha</h1>
+        {ok ? (
+          <React.Fragment>
+            <p className="sub">Senha alterada com sucesso.</p>
+            <div className="row" style={{ justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button onClick={props.onFechar}>Fechar</button>
+            </div>
+          </React.Fragment>
+        ) : (
+          <React.Fragment>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
+              <div><label className="muted" style={{ fontSize: '12px' }}>Senha atual</label><input type="password" value={senhaAtual} onChange={function (e) { setSenhaAtual(e.target.value); }} /></div>
+              <div><label className="muted" style={{ fontSize: '12px' }}>Nova senha</label><input type="password" value={senhaNova} onChange={function (e) { setSenhaNova(e.target.value); }} /></div>
+              <div><label className="muted" style={{ fontSize: '12px' }}>Confirmar nova senha</label><input type="password" value={confirmarNova} onChange={function (e) { setConfirmarNova(e.target.value); }} /></div>
+            </div>
+            {erro ? <div className="err" style={{ marginTop: '10px' }}>{erro}</div> : null}
+            <div className="row" style={{ justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button className="ghost" onClick={props.onFechar} disabled={enviando}>Cancelar</button>
+              <button onClick={salvar} disabled={enviando || !senhaAtual || !senhaNova || !confirmarNova}>{enviando ? 'Salvando...' : 'Salvar'}</button>
+            </div>
+          </React.Fragment>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Reset administrativo de senha de OUTRO usuario -- so gerente (so da
+// propria equipe, ja filtrado pela lista que o GET /usuarios devolve) ou
+// diretor (qualquer um). Nao pede a senha atual.
+function BotaoRedefinirSenha(props) {
+  const [aberto, setAberto] = useState(false);
+  const [senhaNova, setSenhaNova] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  function salvar() {
+    if (senhaNova.length < 6) { setMsg('Mínimo 6 caracteres.'); return; }
+    setEnviando(true);
+    api('/usuarios/' + props.usuarioId + '/senha', { method: 'PUT', body: JSON.stringify({ senha_nova: senhaNova }) }, props.token)
+      .then(function () { setMsg('Senha redefinida.'); setAberto(false); setSenhaNova(''); })
+      .catch(function (e) { setMsg('Erro: ' + e.message); })
+      .then(function () { setEnviando(false); });
+  }
+
+  if (!aberto) {
+    return (
+      <span>
+        <button className="mini ghost" onClick={function () { setAberto(true); setMsg(null); }}>Redefinir senha</button>
+        {msg ? <span className="muted" style={{ fontSize: '11px', marginLeft: '4px' }}>{msg}</span> : null}
+      </span>
+    );
+  }
+  return (
+    <span className="row" style={{ flexWrap: 'nowrap' }}>
+      <input type="password" placeholder="Nova senha (mín. 6)" value={senhaNova} onChange={function (e) { setSenhaNova(e.target.value); }} style={{ fontSize: '11px', maxWidth: '150px' }} />
+      <button className="mini" disabled={enviando || senhaNova.length < 6} onClick={salvar}>{enviando ? '...' : 'Ok'}</button>
+      <button className="mini ghost" onClick={function () { setAberto(false); setSenhaNova(''); }}>X</button>
+    </span>
+  );
+}
+
 function BotaoExcluirProjeto(props) {
   const [confirmando, setConfirmando] = useState(false);
   const [excluindo, setExcluindo] = useState(false);
@@ -1797,10 +1892,15 @@ function AdminUsuarios(props) {
       <h2>Usuários ({usuarios.length})</h2>
       {erro ? <div className="err">{erro}</div> : null}
       <table>
-        <thead><tr><th>Nome</th><th>E-mail</th><th>Nível</th><th>Região</th></tr></thead>
+        <thead><tr><th>Nome</th><th>E-mail</th><th>Nível</th><th>Região</th><th>Senha</th></tr></thead>
         <tbody>
           {usuarios.map(function (u) {
-            return <tr key={u.id}><td>{u.nome}</td><td>{u.email}</td><td>{u.nivel}</td><td>{u.regiao || '-'}</td></tr>;
+            return (
+              <tr key={u.id}>
+                <td>{u.nome}</td><td>{u.email}</td><td>{u.nivel}</td><td>{u.regiao || '-'}</td>
+                <td><BotaoRedefinirSenha usuarioId={u.id} token={props.token} /></td>
+              </tr>
+            );
           })}
         </tbody>
       </table>
@@ -1957,6 +2057,7 @@ function App() {
   const [dashboardKey, setDashboardKey] = useState(0);
   const [resumoPipeline, setResumoPipeline] = useState(null);
   const [secaoProjeto, setSecaoProjeto] = useState('visao-geral');
+  const [mostrarTrocarSenha, setMostrarTrocarSenha] = useState(false);
 
   function abrirProjeto(id) {
     setProjetoAtual(null);
@@ -2093,9 +2194,15 @@ function App() {
             <div className="nome">{usuario.nome}</div>
             <div className="nivel">{usuario.nivel}</div>
           </div>
-          <button className="mini ghost" onClick={onLogout} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}><Icone nome="sair" />Sair</button>
+          <div className="row" style={{ flexWrap: 'nowrap', gap: '4px' }}>
+            <button className="mini ghost" title="Trocar minha senha" onClick={function () { setMostrarTrocarSenha(true); }}>🔑</button>
+            <button className="mini ghost" onClick={onLogout} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}><Icone nome="sair" />Sair</button>
+          </div>
         </div>
+        <div className="muted" style={{ fontSize: '10px', textAlign: 'center', padding: '6px 0 2px', opacity: .5 }}>v{VERSAO_APP}</div>
       </aside>
+
+      {mostrarTrocarSenha ? <ModalTrocarSenha token={token} onFechar={function () { setMostrarTrocarSenha(false); }} /> : null}
 
       <div className="conteudo">
         <main>

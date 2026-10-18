@@ -247,6 +247,47 @@ app.get('/usuarios', auth, async (req, res) => {
   }
 });
 
+// Troca a PROPRIA senha (qualquer usuario logado) -- exige a senha atual.
+app.put('/me/senha', auth, async (req, res) => {
+  try {
+    const senhaAtual = (req.body || {}).senha_atual;
+    const senhaNova = (req.body || {}).senha_nova;
+    if (!senhaAtual || !senhaNova) return res.status(400).json({ erro: 'Informe a senha atual e a nova senha' });
+    if (String(senhaNova).length < 6) return res.status(400).json({ erro: 'A nova senha precisa ter pelo menos 6 caracteres' });
+    const u = must(await supabase.from('usuarios').select('id,salt,senha_hash').eq('id', req.usuario.id).maybeSingle());
+    if (!u) return res.status(404).json({ erro: 'Usuario nao encontrado' });
+    if (hash(senhaAtual, u.salt) !== u.senha_hash) return res.status(401).json({ erro: 'Senha atual incorreta' });
+    const novoSalt = crypto.randomBytes(16).toString('hex');
+    must(await supabase.from('usuarios').update({ salt: novoSalt, senha_hash: hash(senhaNova, novoSalt) }).eq('id', u.id).select().single());
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
+// Redefine a senha de OUTRO usuario -- so gerente (so da propria equipe) ou
+// diretor (qualquer um). Nao pede a senha atual (e um reset administrativo,
+// pra quando a pessoa esqueceu ou pra deixar uma senha inicial no
+// cadastro).
+app.put('/usuarios/:id/senha', auth, exigirNivel('gerente', 'diretor'), async (req, res) => {
+  try {
+    const senhaNova = (req.body || {}).senha_nova;
+    if (!senhaNova) return res.status(400).json({ erro: 'Informe a nova senha' });
+    if (String(senhaNova).length < 6) return res.status(400).json({ erro: 'A nova senha precisa ter pelo menos 6 caracteres' });
+    if (req.usuario.nivel === 'gerente') {
+      const ids = await idsDaEquipe(req.usuario.id);
+      if (ids.indexOf(req.params.id) === -1) return res.status(403).json({ erro: 'Sem permissao sobre este usuario' });
+    }
+    const u = must(await supabase.from('usuarios').select('id').eq('id', req.params.id).maybeSingle());
+    if (!u) return res.status(404).json({ erro: 'Usuario nao encontrado' });
+    const novoSalt = crypto.randomBytes(16).toString('hex');
+    must(await supabase.from('usuarios').update({ salt: novoSalt, senha_hash: hash(senhaNova, novoSalt) }).eq('id', u.id).select().single());
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
 // ---------- CONFIG FISCAL (a "tabela de desconto": ICMS por estado + constantes globais) ----------
 app.get('/config/fiscal', auth, async (req, res) => {
   try {
