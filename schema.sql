@@ -53,8 +53,34 @@ create table projetos (
   montagem numeric default 0,       -- total da negociacao, somado uma unica vez (nao por pivo)
   servicos_adicionais numeric default 0, -- idem
 
+  -- Dados do pedido / financiamento, igual a aba RESUMO da Calculadora.xlsm
+  -- (CLIENTE/PROPRIEDADE/LOCAL ja vem de cliente/fazenda/municipio/estado
+  -- acima; RESPONSAVEL ja vem de vendedor_id).
+  distribuidor text,
+  pedido_data date,
+  exibir_forma_pagamento boolean default false,
+  forma_pagamento text check (forma_pagamento in ('Financiamento','Recurso Próprio','Operação Mista')),
+  dias_adicionais numeric default 20,
+  juros_am_pct numeric default 1.5, -- "Juros (% a.m.)" -- guardado como 1.5 (= 1,5%), igual convencao dos *_pct acima
+
   created_at timestamptz default now(),
   updated_at timestamptz default now()
+);
+
+-- Parcelas de financiamento (aba RESUMO, tabela "Parcela/Pagamento/Data
+-- vencimento/Porcentagem/Valor principal/Valor futuro" da Calculadora.xlsm).
+-- Formula de Valor futuro (validada contra o arquivo real do cliente Paula
+-- Abreu Barcellos em 2026-10-18): se a parcela vence ANTES da
+-- "Data de entrega requerida" (= pedido_data + 30 + dias_adicionais), nao
+-- tem juros; se vence DEPOIS, principal * (1+juros_am)^(dias_apos_entrega/30).
+create table parcelas_pagamento (
+  id uuid primary key default gen_random_uuid(),
+  projeto_id uuid references projetos(id) on delete cascade,
+  ordem int not null default 1,
+  pagamento text not null, -- rotulo livre: "Sinal", "Pré Embarque", "Parcelado"...
+  data_vencimento date not null,
+  porcentagem numeric not null default 0, -- guardado como 10 (= 10%), nao 0.10
+  created_at timestamptz default now()
 );
 
 -- Um registro por pivo (equipamento), extraido automaticamente do arquivo

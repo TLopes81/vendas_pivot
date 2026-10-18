@@ -697,6 +697,61 @@ app.put('/projetos/:id/comercial', auth, async (req, res) => {
   }
 });
 
+// Dados do pedido + forma de pagamento (aba RESUMO da Calculadora.xlsm --
+// CLIENTE/PROPRIEDADE/LOCAL/RESPONSAVEL ja vem de outros campos do projeto;
+// aqui so o que e exclusivo dessa aba: distribuidor, data do pedido, e a
+// config do financiamento).
+app.put('/projetos/:id/financiamento', auth, async (req, res) => {
+  try {
+    const p = must(await supabase.from('projetos').select('*').eq('id', req.params.id).maybeSingle());
+    if (!p) return res.status(404).json({ erro: 'Projeto nao encontrado' });
+    if (!(await possoAcessarProjeto(req.usuario, p.id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
+
+    const b = req.body || {};
+    const novo = {
+      distribuidor: b.distribuidor !== undefined ? b.distribuidor : p.distribuidor,
+      pedido_data: b.pedido_data !== undefined ? b.pedido_data : p.pedido_data,
+      exibir_forma_pagamento: b.exibir_forma_pagamento !== undefined ? !!b.exibir_forma_pagamento : p.exibir_forma_pagamento,
+      forma_pagamento: b.forma_pagamento !== undefined ? b.forma_pagamento : p.forma_pagamento,
+      dias_adicionais: b.dias_adicionais != null ? Number(b.dias_adicionais) : p.dias_adicionais,
+      juros_am_pct: b.juros_am_pct != null ? Number(b.juros_am_pct) : p.juros_am_pct,
+      updated_at: new Date().toISOString()
+    };
+    const row = must(await supabase.from('projetos').update(novo).eq('id', p.id).select().single());
+    res.json(row);
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
+// Parcelas de financiamento -- substitui a lista inteira de uma vez (sao
+// poucas linhas, 1 a 4 normalmente, editadas juntas como um formulario so,
+// igual a planilha). Body: { parcelas: [{pagamento, data_vencimento,
+// porcentagem}, ...] }, na ordem que devem aparecer.
+app.put('/projetos/:id/parcelas', auth, async (req, res) => {
+  try {
+    if (!(await possoAcessarProjeto(req.usuario, req.params.id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
+    const parcelas = Array.isArray((req.body || {}).parcelas) ? req.body.parcelas : [];
+    await supabase.from('parcelas_pagamento').delete().eq('projeto_id', req.params.id);
+    if (parcelas.length > 0) {
+      const linhas = parcelas.map(function (p, i) {
+        return {
+          projeto_id: req.params.id,
+          ordem: i + 1,
+          pagamento: String(p.pagamento || '').trim() || ('Parcela ' + (i + 1)),
+          data_vencimento: p.data_vencimento,
+          porcentagem: Number(p.porcentagem) || 0
+        };
+      });
+      must(await supabase.from('parcelas_pagamento').insert(linhas));
+    }
+    const rows = must(await supabase.from('parcelas_pagamento').select('*').eq('projeto_id', req.params.id).order('ordem'));
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
 // Fila de alteracoes de desconto ainda nao gravadas no arquivo local --
 // o script local (device bridge / agente na maquina do usuario) consome
 // isso, escreve no .xlsm e confirma com PUT /log_desconto/:id/sincronizado
@@ -872,11 +927,13 @@ app.get('/projetos/:id/resumo', auth, async (req, res) => {
       bombaMapa[piv.bomba_nome].qtde_pivos += 1;
     });
     const bombas = Object.values(bombaMapa);
+    const parcelas = must(await supabase.from('parcelas_pagamento').select('*').eq('projeto_id', p.id).order('ordem'));
 
     res.json({
       projeto: Object.assign({}, p, { vendedor_nome: vendedor ? vendedor.nome : null, vendedor_email: vendedor ? vendedor.email : null }),
       pivos: pivos,
       itens_adicionais: itensAdicionais,
+      parcelas: parcelas,
       resumo: {
         qtde_pivos: pivos.length,
         valor_total: valorTotal,

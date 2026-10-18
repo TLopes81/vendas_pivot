@@ -131,7 +131,7 @@ const API = '';
 // verdade (F5/Ctrl+Shift+R), nunca so navegando dentro do app. Isso aqui e
 // o jeito de confirmar se uma tela esta mesmo na ultima versao publicada
 // antes de reportar algo como bug -- bump a cada deploy.
-const VERSAO_APP = '2026-10-18.5';
+const VERSAO_APP = '2026-10-18.6';
 
 function api(path, options, token) {
   const opts = options || {};
@@ -940,6 +940,180 @@ function ResumoTecnico(props) {
   );
 }
 
+function paraDataISO(d) {
+  if (!d) return '';
+  if (typeof d === 'string') return d.slice(0, 10);
+  const pad = function (n) { return String(n).padStart(2, '0'); };
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+function formatarDataBR(iso) {
+  if (!iso) return '-';
+  const partes = String(iso).slice(0, 10).split('-');
+  if (partes.length !== 3) return '-';
+  return partes[2] + '/' + partes[1] + '/' + partes[0];
+}
+function somarDias(dataBase, dias) {
+  const d = new Date(dataBase.getFullYear(), dataBase.getMonth(), dataBase.getDate());
+  d.setDate(d.getDate() + dias);
+  return d;
+}
+
+// Forma de pagamento / financiamento -- replica a aba RESUMO da
+// Calculadora.xlsm. Formula de "Valor futuro" validada contra planilha real
+// (cliente Paula Abreu Barcellos, 2026-10-18): parcela que vence ANTES da
+// "Data de entrega requerida" nao tem juros; depois, principal composto
+// mensalmente, pro-rata por dia: principal * (1+juros_am)^(dias/30).
+// "Data de entrega requerida" = hoje (dia que a proposta e vista/impressa)
+// + 30 + dias_adicionais -- igual a planilha (usa a data do documento, nao
+// a data do pedido).
+function FinanciamentoProposta(props) {
+  const p = props.projeto;
+  const valorTotal = props.valorTotal;
+  const [editando, setEditando] = useState(false);
+  const [exibir, setExibir] = useState(!!p.exibir_forma_pagamento);
+  const [distribuidor, setDistribuidor] = useState(p.distribuidor || '');
+  const [pedidoData, setPedidoData] = useState(paraDataISO(p.pedido_data));
+  const [diasAdicionais, setDiasAdicionais] = useState(p.dias_adicionais != null ? p.dias_adicionais : 20);
+  const [jurosPct, setJurosPct] = useState(p.juros_am_pct != null ? p.juros_am_pct : 1.5);
+  const [formaPagamento, setFormaPagamento] = useState(p.forma_pagamento || 'Financiamento');
+  const [parcelas, setParcelas] = useState((props.parcelas || []).map(function (x) {
+    return { pagamento: x.pagamento, data_vencimento: paraDataISO(x.data_vencimento), porcentagem: x.porcentagem };
+  }));
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+
+  const dataEntregaRequerida = somarDias(new Date(), 30 + (Number(diasAdicionais) || 0));
+
+  function valorPrincipal(pct) { return valorTotal * (Number(pct) || 0) / 100; }
+  function valorFuturo(parc) {
+    const principal = valorPrincipal(parc.porcentagem);
+    if (!parc.data_vencimento) return principal;
+    const partes = parc.data_vencimento.split('-').map(Number);
+    const venc = new Date(partes[0], partes[1] - 1, partes[2]);
+    if (venc < dataEntregaRequerida) return principal;
+    const dias = (venc - dataEntregaRequerida) / (1000 * 60 * 60 * 24);
+    return principal * Math.pow(1 + (Number(jurosPct) || 0) / 100, dias / 30);
+  }
+
+  const somaPct = parcelas.reduce(function (s, x) { return s + (Number(x.porcentagem) || 0); }, 0);
+  const somaPrincipal = parcelas.reduce(function (s, x) { return s + valorPrincipal(x.porcentagem); }, 0);
+  const somaFuturo = parcelas.reduce(function (s, x) { return s + valorFuturo(x); }, 0);
+  const valorParcelado = parcelas
+    .filter(function (x) { return String(x.pagamento || '').trim().toLowerCase() === 'parcelado'; })
+    .reduce(function (s, x) { return s + valorPrincipal(x.porcentagem); }, 0);
+
+  function addParcela() { setParcelas(parcelas.concat([{ pagamento: '', data_vencimento: '', porcentagem: 0 }])); }
+  function removerParcela(i) { setParcelas(parcelas.filter(function (_, idx) { return idx !== i; })); }
+  function mudarParcela(i, campo, valor) {
+    setParcelas(parcelas.map(function (x, idx) { return idx === i ? Object.assign({}, x, { [campo]: valor }) : x; }));
+  }
+
+  function salvar() {
+    setSalvando(true);
+    setErro(null);
+    api('/projetos/' + p.id + '/financiamento', {
+      method: 'PUT', body: JSON.stringify({
+        distribuidor: distribuidor, pedido_data: pedidoData || null, exibir_forma_pagamento: exibir,
+        forma_pagamento: formaPagamento, dias_adicionais: Number(diasAdicionais), juros_am_pct: Number(jurosPct)
+      })
+    }, props.token)
+      .then(function () {
+        return api('/projetos/' + p.id + '/parcelas', { method: 'PUT', body: JSON.stringify({ parcelas: parcelas }) }, props.token);
+      })
+      .then(function () { setEditando(false); if (props.onChange) props.onChange(); })
+      .catch(function (e) { setErro(e.message); })
+      .then(function () { setSalvando(false); });
+  }
+
+  if (!exibir && !editando) {
+    return props.podeEditar ? (
+      <div className="no-imprimir" style={{ marginTop: '14px' }}>
+        <button className="ghost" onClick={function () { setEditando(true); }}>+ Adicionar dados do pedido / forma de pagamento</button>
+      </div>
+    ) : null;
+  }
+
+  return (
+    <div style={{ marginTop: '18px', paddingTop: '14px', borderTop: '1px solid var(--borda)' }}>
+      <div className="row no-imprimir" style={{ justifyContent: 'space-between' }}>
+        <h2 style={{ margin: 0 }}>Dados do pedido e forma de pagamento</h2>
+        {props.podeEditar ? (
+          editando ? (
+            <div className="row">
+              {erro ? <span className="err" style={{ margin: 0 }}>{erro}</span> : null}
+              <button className="ghost" onClick={function () { setEditando(false); }} disabled={salvando}>Cancelar</button>
+              <button onClick={salvar} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</button>
+            </div>
+          ) : (
+            <button className="mini ghost" onClick={function () { setEditando(true); }}>Editar</button>
+          )
+        ) : null}
+      </div>
+
+      {editando ? (
+        <div className="no-imprimir" style={{ marginTop: '10px' }}>
+          <div className="grid-campos">
+            <div><label>Distribuidor</label><input value={distribuidor} onChange={function (e) { setDistribuidor(e.target.value); }} /></div>
+            <div><label>Data do pedido</label><input type="date" value={pedidoData} onChange={function (e) { setPedidoData(e.target.value); }} /></div>
+            <div>
+              <label>Forma de pagamento</label>
+              <select value={formaPagamento} onChange={function (e) { setFormaPagamento(e.target.value); }}>
+                <option value="Financiamento">Financiamento</option>
+                <option value="Recurso Próprio">Recurso Próprio</option>
+                <option value="Operação Mista">Operação Mista</option>
+              </select>
+            </div>
+            <div><label>Dias adicionais</label><input type="number" value={diasAdicionais} onChange={function (e) { setDiasAdicionais(e.target.value); }} /></div>
+            <div><label>Juros (% a.m.)</label><input type="number" step="0.01" value={jurosPct} onChange={function (e) { setJurosPct(e.target.value); }} /></div>
+          </div>
+          <label className="row" style={{ marginTop: '8px' }}>
+            <input type="checkbox" checked={exibir} onChange={function (e) { setExibir(e.target.checked); }} style={{ width: 'auto', height: 'auto' }} />
+            Exibir informações sobre forma de pagamento na proposta
+          </label>
+        </div>
+      ) : null}
+
+      {exibir ? (
+        <React.Fragment>
+          <p className="muted" style={{ margin: editando ? '14px 0 4px' : '4px 0' }}>
+            {(distribuidor || p.distribuidor) ? 'Distribuidor: ' + (distribuidor || p.distribuidor) + ' — ' : ''}
+            Data de entrega requerida: {formatarDataBR(paraDataISO(dataEntregaRequerida))} &middot; Forma de pagamento: {formaPagamento} &middot; Juros: {numero(jurosPct, 2)}% a.m. &middot; Valor parcelado: {brl(valorParcelado)}
+          </p>
+          <table style={{ marginTop: '8px' }}>
+            <thead>
+              <tr><th>Parcela</th><th>Pagamento</th><th>Data vencimento</th><th>%</th><th>Valor principal</th><th>Valor futuro</th>{editando ? <th className="no-imprimir"></th> : null}</tr>
+            </thead>
+            <tbody>
+              {parcelas.map(function (parc, i) {
+                return (
+                  <tr key={i}>
+                    <td>{i + 1}</td>
+                    <td>{editando ? <input value={parc.pagamento} onChange={function (e) { mudarParcela(i, 'pagamento', e.target.value); }} /> : parc.pagamento}</td>
+                    <td>{editando ? <input type="date" value={parc.data_vencimento} onChange={function (e) { mudarParcela(i, 'data_vencimento', e.target.value); }} /> : formatarDataBR(parc.data_vencimento)}</td>
+                    <td>{editando ? <input type="number" step="0.01" className="campo-mini" value={parc.porcentagem} onChange={function (e) { mudarParcela(i, 'porcentagem', e.target.value); }} /> : numero(parc.porcentagem, 2) + '%'}</td>
+                    <td>{brl(valorPrincipal(parc.porcentagem))}</td>
+                    <td>{brl(valorFuturo(parc))}</td>
+                    {editando ? <td className="no-imprimir"><button className="mini ghost" onClick={function () { removerParcela(i); }}>X</button></td> : null}
+                  </tr>
+                );
+              })}
+              {parcelas.length === 0 ? <tr><td colSpan={editando ? 7 : 6} className="muted">Nenhuma parcela.</td></tr> : null}
+              <tr>
+                <td colSpan={3}><strong>Totais</strong></td>
+                <td><strong>{numero(somaPct, 2)}%</strong></td>
+                <td><strong>{brl(somaPrincipal)}</strong></td>
+                <td><strong>{brl(somaFuturo)}</strong></td>
+                {editando ? <td className="no-imprimir"></td> : null}
+              </tr>
+            </tbody>
+          </table>
+          {editando ? <button className="ghost no-imprimir" style={{ marginTop: '8px' }} onClick={addParcela}>+ Parcela</button> : null}
+        </React.Fragment>
+      ) : null}
+    </div>
+  );
+}
+
 function ResumoComercial(props) {
   const p = props.projeto;
   const pivos = props.pivos;
@@ -1008,9 +1182,21 @@ function ResumoComercial(props) {
 
         {p.vendedor_nome ? (
           <p className="muted" style={{ marginTop: '14px' }}>
-            {p.vendedor_nome}{p.vendedor_email ? ' — ' + p.vendedor_email : ''}
+            Responsável: {p.vendedor_nome}{p.vendedor_email ? ' — ' + p.vendedor_email : ''}
           </p>
         ) : null}
+
+        {/* Fica DENTRO do wrapper de impressao (#resumo-comercial-imprimir)
+            de proposito -- e o equivalente a "pagina 2" da Calculadora.xlsm
+            (forma de pagamento/parcelas), que tem que sair junto no PDF. */}
+        <FinanciamentoProposta
+          projeto={p}
+          parcelas={props.parcelas}
+          valorTotal={total.valor_total}
+          podeEditar={props.podeEditar}
+          token={props.token}
+          onChange={props.onChange}
+        />
       </div>
     </div>
   );
