@@ -50,6 +50,21 @@
   .voltar { background:none; color:var(--azul2); height:auto; padding:0; font-size:13px; font-weight:600; margin-bottom:12px; }
   .grid-campos { display:grid; grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); gap:8px; margin:8px 0; }
   .grid-campos label { margin:0 0 2px; font-size:10px; }
+  .app-shell { display:flex; min-height:100vh; align-items:stretch; }
+  .sidebar { width:260px; flex-shrink:0; background:#fff; border-right:1px solid var(--borda); padding:20px 16px; display:flex; flex-direction:column; position:sticky; top:0; height:100vh; overflow-y:auto; }
+  .sidebar .brand { font-weight:800; font-size:18px; color:var(--azul); letter-spacing:.01em; }
+  .sidebar .brand-sub { font-size:10px; color:#8a97a0; letter-spacing:.06em; margin:2px 0 22px; }
+  .sidebar nav.secao { margin-bottom:18px; }
+  .sidebar nav.secao .titulo { font-size:10px; color:#8a97a0; text-transform:uppercase; letter-spacing:.06em; margin:0 0 8px 8px; }
+  .sidebar nav.secao button { width:100%; text-align:left; background:none; border:0; color:#2c3b47; height:40px; padding:0 10px; border-radius:9px; font-size:13px; font-weight:500; display:flex; align-items:center; gap:10px; cursor:pointer; margin-bottom:2px; }
+  .sidebar nav.secao button:hover { background:#f4f7fb; }
+  .sidebar nav.secao button.ativo { background:#e7f1f6; color:var(--azul2); font-weight:700; }
+  .sidebar .badge-inline { background:#c0392b; color:#fff; font-size:10px; border-radius:999px; min-width:16px; height:16px; display:inline-flex; align-items:center; justify-content:center; padding:0 5px; margin-left:auto; }
+  .sidebar .perfil { margin-top:auto; display:flex; align-items:center; gap:10px; padding-top:16px; border-top:1px solid var(--borda); }
+  .sidebar .avatar { width:34px; height:34px; border-radius:999px; background:var(--azul); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; flex-shrink:0; }
+  .novo-projeto-btn { width:100%; background:var(--azul2); color:#fff; font-weight:700; border-radius:10px; height:44px; border:0; cursor:pointer; font-size:14px; }
+  .novo-projeto-btn:disabled { opacity:.6; cursor:not-allowed; }
+  .conteudo { flex:1; min-width:0; }
   @media print {
     body * { visibility: hidden; }
     #resumo-comercial-imprimir, #resumo-comercial-imprimir * { visibility: visible; }
@@ -83,6 +98,12 @@ function api(path, options, token) {
       return data;
     });
   });
+}
+function iniciais(nome) {
+  const partes = String(nome || '').trim().split(/\s+/).filter(Boolean);
+  const a = partes[0] ? partes[0][0] : '';
+  const b = partes.length > 1 ? partes[partes.length - 1][0] : '';
+  return (a + b).toUpperCase();
 }
 function brl(v) {
   return (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -323,24 +344,19 @@ function NovoProjeto(props) {
   }
 
   return (
-    <div style={{ position: 'relative', display: 'inline-block' }}>
+    <div style={{ marginBottom: '20px' }}>
       <button
+        className="novo-projeto-btn"
         title="Novo projeto -- selecionar planilha(s) de pivô (.xlsb)"
         disabled={enviando}
         onClick={function () { inputRef.current.click(); }}
-        style={{ fontSize: '22px', fontWeight: '700', width: '42px', height: '42px', padding: 0, lineHeight: '1' }}
       >
-        {enviando ? '…' : '+'}
+        {enviando ? 'Processando…' : '+ Novo projeto'}
       </button>
       <input ref={inputRef} type="file" accept=".xlsb" multiple style={{ display: 'none' }} onChange={aoSelecionarArquivos} />
-      {(status || erro) ? (
-        <div className="card" style={{ position: 'absolute', right: 0, top: '50px', zIndex: 10, width: '280px', padding: '14px' }}>
-          <p className="muted" style={{ margin: '0 0 6px', fontWeight: '600' }}>Novo projeto</p>
-          {!SUPORTA_PASTA_LOCAL ? <p className="muted" style={{ margin: '0 0 6px' }}>Este navegador não organiza a pasta local automaticamente (use Chrome/Edge).</p> : null}
-          {status ? <p className="muted" style={{ margin: 0 }}>{status}</p> : null}
-          {erro ? <div className="err" style={{ margin: 0 }}>{erro}</div> : null}
-        </div>
-      ) : null}
+      {!SUPORTA_PASTA_LOCAL ? <p className="muted" style={{ fontSize: '11px', margin: '8px 0 0' }}>Este navegador não organiza a pasta local automaticamente (use Chrome/Edge).</p> : null}
+      {status ? <p className="muted" style={{ fontSize: '11px', margin: '8px 0 0' }}>{status}</p> : null}
+      {erro ? <div className="err" style={{ margin: '8px 0 0', fontSize: '11px' }}>{erro}</div> : null}
     </div>
   );
 }
@@ -898,6 +914,7 @@ function Dashboard(props) {
 
       <div className="panel">
         <h2>Projetos ({projetos.length}) &middot; <span className="muted">escopo: {escopo || '-'}</span></h2>
+        <p className="muted" style={{ margin: '-6px 0 10px' }}>Clique em um cliente ou em "Abrir" para ver a análise comercial (dashboard por negociação) daquele projeto, com todos os seus pivôs.</p>
         <table>
           <thead>
             <tr><th>Cliente</th><th>Local</th><th>Vendedor</th><th>Status</th><th>Ações</th></tr>
@@ -1141,48 +1158,75 @@ function App() {
   const podeAdmin = usuario.nivel === 'gerente' || usuario.nivel === 'diretor';
   const podeReceberArquivo = usuario.nivel === 'gerente' || usuario.nivel === 'diretor';
 
+  function irPara(novaTela) {
+    setProjetoAberto(null);
+    setTela(novaTela);
+  }
+
   return (
-    <div>
-      <header>
+    <div className="app-shell">
+      <aside className="sidebar">
         <div>
-          <strong>PIVOT Deal Manager WEB</strong>
-          <div className="who">{usuario.nome} &middot; {usuario.email} &middot; nivel: {usuario.nivel}</div>
+          <div className="brand">PIVOT Deal Manager</div>
+          <div className="brand-sub">GESTÃO DE PROPOSTAS</div>
         </div>
-        <div className="row">
-          <nav className="tabs">
-            <button className={tela === 'dashboard' ? 'ativo' : ''} onClick={function () { setTela('dashboard'); }}>Dashboard</button>
-            {podeReceberArquivo ? (
-              <button className={tela === 'pendentes' ? 'ativo' : ''} onClick={function () { setTela('pendentes'); }}>
-                Pendentes
-                {qtdePendentes > 0 ? <span className="badge">{qtdePendentes}</span> : null}
-              </button>
-            ) : null}
-            {podeAdmin ? <button className={tela === 'admin' ? 'ativo' : ''} onClick={function () { setTela('admin'); }}>Admin</button> : null}
+
+        <NovoProjeto
+          token={token}
+          onChange={function () { setDashboardKey(function (k) { return k + 1; }); }}
+          onAbrir={function (id) { setProjetoAberto(id); setTela('dashboard'); }}
+        />
+
+        <nav className="secao">
+          <p className="titulo">Acompanhar</p>
+          <button className={(tela === 'dashboard' && !projetoAberto) ? 'ativo' : ''} onClick={function () { irPara('dashboard'); }}>
+            <span>🏠</span> Dashboard geral
+          </button>
+          {podeReceberArquivo ? (
+            <button className={(tela === 'pendentes' && !projetoAberto) ? 'ativo' : ''} onClick={function () { irPara('pendentes'); }}>
+              <span>📥</span> Pendentes
+              {qtdePendentes > 0 ? <span className="badge-inline">{qtdePendentes}</span> : null}
+            </button>
+          ) : null}
+        </nav>
+
+        {podeAdmin ? (
+          <nav className="secao">
+            <p className="titulo">Organizar</p>
+            <button className={(tela === 'admin' && !projetoAberto) ? 'ativo' : ''} onClick={function () { irPara('admin'); }}>
+              <span>⚙️</span> Usuários &amp; fiscal
+            </button>
           </nav>
-          <NovoProjeto
-            token={token}
-            onChange={function () { setDashboardKey(function (k) { return k + 1; }); }}
-            onAbrir={function (id) { setProjetoAberto(id); setTela('dashboard'); }}
-          />
-          <button className="ghost" onClick={onLogout}>Sair</button>
+        ) : null}
+
+        <div className="perfil">
+          <div className="avatar">{iniciais(usuario.nome)}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{usuario.nome}</div>
+            <div className="muted" style={{ fontSize: '11px', textTransform: 'capitalize' }}>{usuario.nivel}</div>
+          </div>
+          <button className="mini ghost" onClick={onLogout}>Sair</button>
         </div>
-      </header>
-      <main>
-        {projetoAberto ? (
-          <ProjetoDetalhe
-            projetoId={projetoAberto}
-            token={token}
-            usuario={usuario}
-            onVoltar={function () { setProjetoAberto(null); setDashboardKey(function (k) { return k + 1; }); }}
-          />
-        ) : (
-          <React.Fragment>
-            {tela === 'admin' && podeAdmin ? <Admin token={token} /> : null}
-            {tela === 'pendentes' && podeReceberArquivo ? <Pendentes token={token} onMudouContagem={atualizarContagemPendentes} /> : null}
-            {tela === 'dashboard' ? <Dashboard key={dashboardKey} token={token} usuario={usuario} onAbrirProjeto={setProjetoAberto} /> : null}
-          </React.Fragment>
-        )}
-      </main>
+      </aside>
+
+      <div className="conteudo">
+        <main>
+          {projetoAberto ? (
+            <ProjetoDetalhe
+              projetoId={projetoAberto}
+              token={token}
+              usuario={usuario}
+              onVoltar={function () { setProjetoAberto(null); setDashboardKey(function (k) { return k + 1; }); }}
+            />
+          ) : (
+            <React.Fragment>
+              {tela === 'admin' && podeAdmin ? <Admin token={token} /> : null}
+              {tela === 'pendentes' && podeReceberArquivo ? <Pendentes token={token} onMudouContagem={atualizarContagemPendentes} /> : null}
+              {tela === 'dashboard' ? <Dashboard key={dashboardKey} token={token} usuario={usuario} onAbrirProjeto={setProjetoAberto} /> : null}
+            </React.Fragment>
+          )}
+        </main>
+      </div>
     </div>
   );
 }
