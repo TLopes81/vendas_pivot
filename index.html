@@ -74,6 +74,22 @@
   .card-pendencia span { font-size:12px; color:var(--texto-sutil); }
   .painel-decisao { background:#fff; border:1px solid var(--borda); border-radius:12px; padding:22px; min-height:220px; }
   .caixa-impacto { background:var(--cinza); border-radius:10px; padding:14px; font-size:13px; color:var(--texto-sutil); line-height:1.5; margin:4px 0 18px; }
+  .resumo-mestre { padding:24px 28px; }
+  .resumo-mestre-trilha { margin:0 0 8px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--vermelho); }
+  .resumo-mestre-titulo { margin:0 0 6px; font-size:26px; }
+  .resumo-mestre-divisor { border-top:1px solid var(--borda); margin:20px 0; }
+  .resumo-mestre-stats { display:grid; grid-template-columns:repeat(3, 1fr); gap:20px; }
+  @media (max-width:700px) { .resumo-mestre-stats { grid-template-columns:1fr; } }
+  .resumo-mestre-stats span { display:block; font-size:12px; text-transform:uppercase; color:var(--texto-sutil); letter-spacing:.03em; margin-bottom:4px; }
+  .resumo-mestre-stats strong { display:block; font-size:22px; }
+  .resumo-mestre-stats p { margin:4px 0 0; }
+  .resumo-mestre-colunas { display:grid; grid-template-columns:1fr 1fr; gap:32px; }
+  @media (max-width:700px) { .resumo-mestre-colunas { grid-template-columns:1fr; } }
+  .resumo-mestre-colunas h3 { margin:0 0 14px; font-size:14px; }
+  .resumo-mestre-insight { display:flex; gap:12px; margin-bottom:16px; }
+  .resumo-mestre-insight-num { font-size:12px; font-weight:700; color:var(--texto-sutil); padding-top:2px; }
+  .resumo-mestre-insight strong { display:block; font-size:13px; font-weight:600; margin-bottom:2px; }
+  .resumo-mestre-insight p { margin:0; }
   .muted { font-size:12px; color:var(--texto-sutil); }
   .campo-mini { width:76px; height:30px; padding:0 8px; text-align:right; }
   .campo-mini.campo-percentual { width:88px; }
@@ -150,7 +166,7 @@ const API = '';
 // verdade (F5/Ctrl+Shift+R), nunca so navegando dentro do app. Isso aqui e
 // o jeito de confirmar se uma tela esta mesmo na ultima versao publicada
 // antes de reportar algo como bug -- bump a cada deploy.
-const VERSAO_APP = '2026-10-18.10';
+const VERSAO_APP = '2026-10-18.11';
 
 function api(path, options, token) {
   const opts = options || {};
@@ -1982,68 +1998,85 @@ function Dashboard(props) {
   const COR_STATUS = { negociando: '#eb0024', concluido_ganho: '#191b21', concluido_perdido: '#b9bcc2' };
   const valorStatus = function (st) { const s = porStatus.filter(function (x) { return x.status === st; })[0]; return s ? s.valor : 0; };
   const maiorValor = Math.max(1, Math.max.apply(null, porStatus.map(function (s) { return s.valor; }).concat([0])));
-  const maiorConcorrente = Math.max(1, Math.max.apply(null, porConcorrente.map(function (c) { return c.valor; }).concat([0])));
+
+  if (!kpis) {
+    return (
+      <div>
+        {erro ? <div className="err">{erro}</div> : null}
+        <p className="muted">Carregando...</p>
+      </div>
+    );
+  }
 
   return (
     <div>
-      {erro ? <div className="err">{erro}</div> : null}
-      <h2 style={{ margin: '0 0 12px' }}>Dashboard geral &middot; <span className="muted" style={{ fontWeight: 400, fontSize: '13px' }}>{escopo || 'todas as negociações no seu escopo'}</span></h2>
-      <div className="kpis">
-        <div className="kpi"><span>Total de projetos</span><strong>{kpis ? kpis.total : '-'}</strong></div>
-        <div className="kpi"><span>Negociando</span><strong>{kpis ? kpis.negociando : '-'}</strong></div>
-        <div className="kpi"><span>Ganhos</span><strong>{kpis ? kpis.concluidos_ganho : '-'}</strong></div>
-        <div className="kpi"><span>Perdidos</span><strong>{kpis ? kpis.concluidos_perdido : '-'}</strong></div>
-        <div className="kpi"><span>Pivôs</span><strong>{kpis ? kpis.qtde_pivos : '-'}</strong></div>
-        <div className="kpi"><span>Área total</span><strong>{kpis ? numero(kpis.area_total_ha, 1) + ' ha' : '-'}</strong></div>
-        <div className="kpi"><span>Valor total</span><strong>{kpis ? brl(kpis.valor_total) : '-'}</strong></div>
-        <div className="kpi"><span>Custo/ha médio</span><strong>{kpis ? brl(kpis.custo_por_hectare_medio) : '-'}</strong></div>
-        <div className="kpi"><span>Valor em negociação</span><strong>{brl(valorStatus('negociando'))}</strong></div>
-        <div className="kpi"><span>Valor ganho</span><strong>{brl(valorStatus('concluido_ganho'))}</strong></div>
-        <div className="kpi"><span>Valor perdido</span><strong>{brl(valorStatus('concluido_perdido'))}</strong></div>
-      </div>
+      <h2 style={{ margin: '0 0 16px' }}>Dashboard geral &middot; <span className="muted" style={{ fontWeight: 400, fontSize: '13px' }}>{escopo || 'todas as negociações no seu escopo'}</span></h2>
 
-      <div className="panel">
-        <h2 style={{ marginBottom: '4px' }}>Funil por status</h2>
-        <p className="muted" style={{ margin: '0 0 16px' }}>Quantos projetos, quanto de valor negociado e quanta área estão em cada etapa.</p>
-        {porStatus.map(function (s) {
-          const pct = Math.max(2, Math.round((s.valor / maiorValor) * 100));
-          return (
-            <div key={s.status} style={{ marginBottom: '16px' }}>
-              <div className="row" style={{ justifyContent: 'space-between', marginBottom: '6px' }}>
-                <span style={{ fontWeight: 600 }}>{ROTULO_STATUS[s.status] || s.status}</span>
-                <span className="muted" style={{ fontSize: '13px' }}>
-                  {s.qtde} projeto{s.qtde === 1 ? '' : 's'} &middot; {numero(s.area_ha, 1)} ha &middot; <strong style={{ color: 'var(--preto)' }}>{brl(s.valor)}</strong>
-                </span>
-              </div>
-              <div style={{ background: 'var(--cinza)', borderRadius: '6px', height: '10px', overflow: 'hidden' }}>
-                <div style={{ width: pct + '%', height: '100%', borderRadius: '6px', background: COR_STATUS[s.status] || 'var(--texto-sutil)' }} />
-              </div>
-            </div>
-          );
-        })}
-        {porStatus.length === 0 ? <p className="muted">Nenhum projeto no seu escopo ainda.</p> : null}
-      </div>
+      <div className="panel resumo-mestre">
+        <p className="resumo-mestre-trilha">NEGOCIANDO &middot; GANHOS &middot; PERDIDOS</p>
+        <h2 className="resumo-mestre-titulo">{brl(valorStatus('negociando'))} em negociação &middot; {brl(valorStatus('concluido_ganho'))} ganho</h2>
+        <p className="muted" style={{ margin: 0 }}>
+          {kpis.total} projeto{kpis.total === 1 ? '' : 's'} &middot; {kpis.qtde_pivos} pivô{kpis.qtde_pivos === 1 ? '' : 's'} &middot; {numero(kpis.area_total_ha, 1)} ha &middot; Custo/ha médio {brl(kpis.custo_por_hectare_medio)}
+        </p>
 
-      <div className="panel">
-        <h2 style={{ marginBottom: '4px' }}>Principais concorrentes (perdidos)</h2>
-        <p className="muted" style={{ margin: '0 0 16px' }}>Valor perdido para cada concorrente, entre os projetos marcados como perdidos por concorrência.</p>
-        {porConcorrente.map(function (c) {
-          const pct = Math.max(2, Math.round((c.valor / maiorConcorrente) * 100));
-          return (
-            <div key={c.concorrente} style={{ marginBottom: '16px' }}>
-              <div className="row" style={{ justifyContent: 'space-between', marginBottom: '6px' }}>
-                <span style={{ fontWeight: 600 }}>{c.concorrente}</span>
-                <span className="muted" style={{ fontSize: '13px' }}>
-                  {c.qtde} projeto{c.qtde === 1 ? '' : 's'} &middot; <strong style={{ color: 'var(--preto)' }}>{brl(c.valor)}</strong>
-                </span>
-              </div>
-              <div style={{ background: 'var(--cinza)', borderRadius: '6px', height: '10px', overflow: 'hidden' }}>
-                <div style={{ width: pct + '%', height: '100%', borderRadius: '6px', background: 'var(--vermelho)' }} />
-              </div>
-            </div>
-          );
-        })}
-        {porConcorrente.length === 0 ? <p className="muted">Nenhuma perda registrada por concorrência ainda.</p> : null}
+        <div className="resumo-mestre-divisor" />
+
+        <div className="resumo-mestre-stats">
+          <div>
+            <span>Em negociação</span>
+            <strong style={{ color: COR_STATUS.negociando }}>{brl(valorStatus('negociando'))}</strong>
+            <p className="muted">{kpis.negociando} projeto{kpis.negociando === 1 ? '' : 's'}</p>
+          </div>
+          <div>
+            <span>Ganhos</span>
+            <strong>{brl(valorStatus('concluido_ganho'))}</strong>
+            <p className="muted">{kpis.concluidos_ganho} projeto{kpis.concluidos_ganho === 1 ? '' : 's'}</p>
+          </div>
+          <div>
+            <span>Perdidos</span>
+            <strong>{brl(valorStatus('concluido_perdido'))}</strong>
+            <p className="muted">{kpis.concluidos_perdido} projeto{kpis.concluidos_perdido === 1 ? '' : 's'}</p>
+          </div>
+        </div>
+
+        <div className="resumo-mestre-divisor" />
+
+        <div className="resumo-mestre-colunas">
+          <div>
+            <h3>Funil por status</h3>
+            {porStatus.map(function (s) {
+              const pct = Math.max(2, Math.round((s.valor / maiorValor) * 100));
+              return (
+                <div key={s.status} style={{ marginBottom: '14px' }}>
+                  <div className="row" style={{ justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ fontWeight: 600, fontSize: '13px' }}>{ROTULO_STATUS[s.status] || s.status}</span>
+                    <span className="muted" style={{ fontSize: '12px' }}>{numero(s.area_ha, 1)} ha</span>
+                  </div>
+                  <div style={{ background: 'var(--cinza)', borderRadius: '6px', height: '9px', overflow: 'hidden' }}>
+                    <div style={{ width: pct + '%', height: '100%', borderRadius: '6px', background: COR_STATUS[s.status] || 'var(--texto-sutil)' }} />
+                  </div>
+                </div>
+              );
+            })}
+            {porStatus.length === 0 ? <p className="muted">Nenhum projeto no seu escopo ainda.</p> : null}
+          </div>
+
+          <div>
+            <h3>Principais concorrentes (perdidos)</h3>
+            {porConcorrente.map(function (c, i) {
+              return (
+                <div key={c.concorrente} className="resumo-mestre-insight">
+                  <span className="resumo-mestre-insight-num">{String(i + 1).padStart(2, '0')}</span>
+                  <div>
+                    <strong>Perdemos {brl(c.valor)} para {c.concorrente}</strong>
+                    <p className="muted">{c.qtde} projeto{c.qtde === 1 ? '' : 's'} perdido{c.qtde === 1 ? '' : 's'} por concorrência</p>
+                  </div>
+                </div>
+              );
+            })}
+            {porConcorrente.length === 0 ? <p className="muted">Nenhuma perda registrada por concorrência ainda.</p> : null}
+          </div>
+        </div>
       </div>
     </div>
   );
