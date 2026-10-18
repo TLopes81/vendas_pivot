@@ -595,23 +595,54 @@ function ArquivosDoProjeto(props) {
     api('/arquivos?projeto_id=' + props.projetoId, {}, props.token).then(setArquivos).catch(function () { setArquivos([]); });
   }, [props.projetoId, props.token, props.versao]);
 
-  if (arquivos.length === 0) return null;
+  const pivos = props.pivos || [];
+  const pivoPorId = {};
+  pivos.forEach(function (p) { pivoPorId[p.id] = p; });
+
+  const arquivosDePivo = arquivos.filter(function (a) { return a.tipo === 'pivo'; });
+  // Cada pivô deveria ter pelo menos 1 arquivo (a planilha que o originou).
+  // Quando o numero de pivos e maior que o de arquivos do tipo 'pivo', e
+  // porque em algum envio o POST /pivos deu certo mas o anexo do arquivo
+  // falhou depois (ver BotaoUploadRapido) -- o pivo existe com os dados
+  // certos, só falta a planilha original.
+  const pivosSemArquivo = pivos.filter(function (p) {
+    return !arquivosDePivo.some(function (a) { return a.pivo_id === p.id; });
+  });
+
+  if (arquivos.length === 0 && pivosSemArquivo.length === 0) return null;
+
   return (
     <div className="panel">
       <h2>Arquivos ({arquivos.length})</h2>
+      <p className="muted" style={{ marginTop: '-6px', marginBottom: '10px' }}>
+        {SUPORTA_PASTA_LOCAL
+          ? 'Também organizados na pasta local escolhida (Cliente/Estado/Município/Fazenda), além de guardados aqui no sistema.'
+          : 'Este navegador não organiza a pasta local automaticamente (use Chrome/Edge no computador) -- os arquivos ficam guardados só aqui no sistema (nuvem), e o "Baixar" funciona de qualquer navegador.'}
+      </p>
+
+      {pivosSemArquivo.length > 0 ? (
+        <div className="err" style={{ marginBottom: '12px' }}>
+          ⚠ {pivosSemArquivo.length} pivô{pivosSemArquivo.length === 1 ? '' : 's'} sem a planilha original anexada: {pivosSemArquivo.map(function (p) { return p.numero_pivo + ' (v' + p.revisao + ')'; }).join(', ')}.
+          Os dados desse(s) pivô(s) estão salvos normalmente -- só falta o arquivo .xlsb em si. Reenvie a planilha dele(s) na aba "Pivôs" para completar.
+        </div>
+      ) : null}
+
       <table>
-        <thead><tr><th>Nome</th><th>Tipo</th><th>Tamanho</th><th></th></tr></thead>
+        <thead><tr><th>Nome</th><th>Tipo</th><th>Pivô / Versão</th><th>Tamanho</th><th></th></tr></thead>
         <tbody>
           {arquivos.map(function (a) {
+            const piv = a.pivo_id ? pivoPorId[a.pivo_id] : null;
             return (
               <tr key={a.id}>
                 <td>{a.nome}</td>
                 <td className="muted">{a.tipo}</td>
+                <td className="muted">{piv ? piv.numero_pivo + ' · v' + piv.revisao : '-'}</td>
                 <td className="muted">{(a.tamanho / 1024).toFixed(0)} KB</td>
                 <td><a href={a.caminho} target="_blank" rel="noreferrer"><button className="mini ghost">Baixar</button></a></td>
               </tr>
             );
           })}
+          {arquivos.length === 0 ? <tr><td colSpan={5} className="muted">Nenhum arquivo guardado ainda.</td></tr> : null}
         </tbody>
       </table>
     </div>
@@ -1315,7 +1346,7 @@ function ProjetoDetalhe(props) {
       ) : null}
 
       {secao === 'arquivos' ? (
-        <ArquivosDoProjeto projetoId={props.projetoId} token={props.token} versao={versao} />
+        <ArquivosDoProjeto projetoId={props.projetoId} token={props.token} versao={versao} pivos={dados.pivos} />
       ) : null}
     </div>
   );
@@ -1383,6 +1414,7 @@ function BotaoExcluirProjeto(props) {
 function BotaoUploadRapido(props) {
   const inputRef = React.useRef(null);
   const [status, setStatus] = useState(null);
+  const [resultados, setResultados] = useState(null);
   const [enviando, setEnviando] = useState(false);
 
   async function aoSelecionarArquivos(ev) {
@@ -1390,14 +1422,17 @@ function BotaoUploadRapido(props) {
     ev.target.value = '';
     if (arquivos.length === 0) return;
     setEnviando(true);
+    setResultados(null);
     let pastaBase = null;
     if (SUPORTA_PASTA_LOCAL) {
       try { pastaBase = await obterPastaBase(); }
       catch (e) { setStatus('Pasta local não selecionada -- enviando só pra o sistema.'); }
     }
+    const resultadosLote = [];
     for (const arquivo of arquivos) {
+      setStatus('Lendo ' + arquivo.name + '...');
+      let pivo = null;
       try {
-        setStatus('Lendo ' + arquivo.name + '...');
         const buffer = await arquivo.arrayBuffer();
         const dado = extrairPivoDoArrayBuffer(buffer, arquivo.name);
 
@@ -1410,30 +1445,40 @@ function BotaoUploadRapido(props) {
           caminhoLocal = r.caminhoRelativo; revisao = r.revisao;
         }
 
-        const pivo = await api('/pivos', {
+        pivo = await api('/pivos', {
           method: 'POST', body: JSON.stringify(Object.assign({}, dado, {
             projeto_id: props.projeto.id, caminho_local: caminhoLocal, revisao: revisao
           }))
         }, props.token);
 
-        const fd = new FormData();
-        fd.append('arquivo', arquivo, arquivo.name);
-        fd.append('projeto_id', props.projeto.id);
-        fd.append('pivo_id', pivo.id);
-        fd.append('tipo', 'pivo');
-        await api('/arquivos', { method: 'POST', body: fd }, props.token);
-
-        setStatus(dado.numero_pivo + (pivo.nova_versao ? ' → v' + pivo.revisao + ' salva.' : ' adicionado.'));
+        // A partir daqui o pivô já existe no banco -- se o upload do arquivo
+        // falhar agora, isso NÃO pode ficar invisível (era a causa do
+        // "5 pivôs mas só 2 arquivos"): tratamos esse erro separadamente.
+        try {
+          const fd = new FormData();
+          fd.append('arquivo', arquivo, arquivo.name);
+          fd.append('projeto_id', props.projeto.id);
+          fd.append('pivo_id', pivo.id);
+          fd.append('tipo', 'pivo');
+          await api('/arquivos', { method: 'POST', body: fd }, props.token);
+          resultadosLote.push({ nome: arquivo.name, ok: true, msg: dado.numero_pivo + (pivo.nova_versao ? ' → v' + pivo.revisao + ' salva (planilha anexada).' : ' adicionado (planilha anexada).') });
+        } catch (e2) {
+          resultadosLote.push({ nome: arquivo.name, ok: false, msg: dado.numero_pivo + ' (v' + pivo.revisao + ') foi salvo no sistema, MAS o arquivo da planilha falhou ao anexar: ' + e2.message + '. Os dados do pivô estão ok; reenvie este arquivo para guardar a planilha original.' });
+        }
       } catch (e) {
-        setStatus('Erro em ' + arquivo.name + ': ' + e.message);
+        resultadosLote.push({ nome: arquivo.name, ok: false, msg: 'Erro ao processar ' + arquivo.name + ': ' + e.message + '. Nada foi salvo para este arquivo.' });
       }
     }
     setEnviando(false);
+    setStatus(null);
+    setResultados(resultadosLote);
     props.onChange();
   }
 
+  const temErro = resultados && resultados.some(function (r) { return !r.ok; });
+
   return (
-    <span className="row" onClick={function (ev) { ev.stopPropagation(); }} style={{ flexWrap: 'nowrap' }}>
+    <span className="row" onClick={function (ev) { ev.stopPropagation(); }} style={{ flexWrap: 'nowrap', alignItems: 'flex-start' }}>
       <button
         className="mini ghost"
         title="Adicionar ou atualizar planilha de pivô deste projeto"
@@ -1444,6 +1489,14 @@ function BotaoUploadRapido(props) {
       </button>
       <input ref={inputRef} type="file" accept=".xlsb" multiple style={{ display: 'none' }} onChange={aoSelecionarArquivos} />
       {status ? <span className="muted" style={{ fontSize: '11px', maxWidth: '150px' }}>{status}</span> : null}
+      {resultados ? (
+        <div style={{ fontSize: '11px', maxWidth: '280px', background: temErro ? '#3a1414' : 'transparent', border: temErro ? '1px solid #7a2b2b' : 'none', borderRadius: '6px', padding: temErro ? '6px 8px' : 0 }}>
+          {resultados.map(function (r, i) {
+            return <div key={i} style={{ color: r.ok ? '#8a8f98' : '#ff8a8a', marginBottom: '2px' }}>{r.ok ? '✓ ' : '⚠ '}{r.msg}</div>;
+          })}
+          <button className="mini ghost" style={{ marginTop: '4px' }} onClick={function (ev) { ev.stopPropagation(); setResultados(null); }}>Ok, entendi</button>
+        </div>
+      ) : null}
     </span>
   );
 }

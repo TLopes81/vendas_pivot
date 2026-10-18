@@ -897,7 +897,7 @@ app.get('/arquivos', auth, async (req, res) => {
   try {
     if (!req.query.projeto_id) return res.status(400).json({ erro: 'Informe projeto_id' });
     if (!(await possoAcessarProjeto(req.usuario, req.query.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
-    const rows = must(await supabase.from('arquivos').select('id,projeto_id,nome,caminho,tamanho,mimetype,created_at').eq('projeto_id', req.query.projeto_id).order('created_at', { ascending: false }));
+    const rows = must(await supabase.from('arquivos').select('id,projeto_id,pivo_id,tipo,nome,caminho,tamanho,mimetype,created_at').eq('projeto_id', req.query.projeto_id).order('created_at', { ascending: false }));
     res.json(rows);
   } catch (e) {
     res.status(500).json({ erro: String((e && e.message) || e) });
