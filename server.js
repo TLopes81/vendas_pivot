@@ -1138,6 +1138,7 @@ app.get('/dashboard', auth, async (req, res) => {
     // nao so a contagem de projetos).
     let ancillaryTotal = 0;
     const porStatusMap = {};
+    const porConcorrenteMap = {};
     for (const proj of projetos) {
       const { icmsPct, pisPct } = await getConstantesFiscais(proj.estado);
       const ancillaryProjeto = calcularAncillaryGrossado(proj, pisPct, icmsPct);
@@ -1155,6 +1156,16 @@ app.get('/dashboard', auth, async (req, res) => {
       porStatusMap[st].qtde += 1;
       porStatusMap[st].valor += valorProjeto;
       porStatusMap[st].area_ha += areaProjeto;
+
+      // Pra onde fomos perdendo orcamento -- so quando o motivo registrado foi
+      // concorrencia (a tela de marcar "Perdido" ja exige escolher o
+      // concorrente nesse caso), pra saber contra quem perdemos mais valor.
+      if (proj.status === 'concluido_perdido' && proj.motivo_perda_categoria === 'concorrencia' && proj.motivo_perda_concorrente) {
+        const c = proj.motivo_perda_concorrente;
+        if (!porConcorrenteMap[c]) porConcorrenteMap[c] = { concorrente: c, qtde: 0, valor: 0 };
+        porConcorrenteMap[c].qtde += 1;
+        porConcorrenteMap[c].valor += valorProjeto;
+      }
     }
     const valorTotal = valorPivos + ancillaryTotal + valorItensAdicionais;
     const areaTotal = pivos.reduce(function (s, r) { return s + (Number(r.area_irrigada_ha) || 0); }, 0);
@@ -1172,6 +1183,7 @@ app.get('/dashboard', auth, async (req, res) => {
       },
       por_status: ['negociando', 'concluido_ganho', 'concluido_perdido']
         .map(function (st) { return porStatusMap[st] || { status: st, qtde: 0, valor: 0, area_ha: 0 }; }),
+      por_concorrente: Object.values(porConcorrenteMap).sort(function (a, b) { return b.valor - a.valor; }),
       nivel: req.usuario.nivel,
       escopo: req.usuario.nivel === 'diretor' ? 'todos os projetos' : (req.usuario.nivel === 'gerente' ? 'sua equipe' : 'seus projetos')
     });
