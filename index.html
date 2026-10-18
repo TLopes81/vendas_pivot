@@ -1582,26 +1582,14 @@ function ParametrosComerciaisProjeto(props) {
         {campoComercial('montagem', 'Montagem (total da negociação)', CampoMonetario)}
         {campoComercial('servicos_adicionais', 'Serv. Adicionais (total da negociação)', CampoMonetario)}
       </div>
-      {props.resumo ? (function () {
-        const valorTotal = props.resumo.valor_total || 0;
-        const parcelas = props.parcelas || [];
-        const pctParcelado = parcelas
-          .filter(function (pg) { return pg.pagamento === 'Parcelado'; })
-          .reduce(function (acc, pg) { return acc + Number(pg.porcentagem || 0); }, 0);
-        const valorParcelado = valorTotal * (pctParcelado / 100);
-        return (
-          <div className="kpis" style={{ marginTop: '16px', marginBottom: 0 }}>
-            <div className="kpi">
-              <span>Valor total negociado</span>
-              <strong>{brl(valorTotal)}</strong>
-            </div>
-            <div className="kpi">
-              <span>Valor parcelado</span>
-              <strong>{brl(valorParcelado)}</strong>
-            </div>
+      {props.resumo ? (
+        <div className="kpis" style={{ marginTop: '16px', marginBottom: 0 }}>
+          <div className="kpi">
+            <span>Valor total negociado</span>
+            <strong>{brl(props.resumo.valor_total || 0)}</strong>
           </div>
-        );
-      })() : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1657,7 +1645,7 @@ function ProjetoDetalhe(props) {
       ) : null}
 
       {secao === 'parametros' ? (
-        <ParametrosComerciaisProjeto token={props.token} projeto={p} resumo={r} parcelas={dados.parcelas} podeEditar={podeEditar} onChange={carregar} />
+        <ParametrosComerciaisProjeto token={props.token} projeto={p} resumo={r} podeEditar={podeEditar} onChange={carregar} />
       ) : null}
 
       {secao === 'itens' ? (
@@ -1942,23 +1930,29 @@ function BotaoUploadRapido(props) {
   );
 }
 
+// Dashboard geral -- so analise agregada (KPIs + funil por status). A gestao
+// de projetos (listar, abrir, criar, excluir) mora na tela "Projetos", em
+// aba propria -- as duas coisas sao jobs diferentes e nao devem dividir tela.
 function Dashboard(props) {
   const [kpis, setKpis] = useState(null);
   const [escopo, setEscopo] = useState('');
-  const [projetos, setProjetos] = useState([]);
+  const [porStatus, setPorStatus] = useState([]);
   const [erro, setErro] = useState(null);
 
-  const carregar = useCallback(function () {
-    api('/dashboard', {}, props.token).then(function (d) { setKpis(d.kpis); setEscopo(d.escopo); }).catch(function (e) { setErro(e.message); });
-    api('/projetos', {}, props.token).then(setProjetos).catch(function (e) { setErro(e.message); });
+  useEffect(function () {
+    api('/dashboard', {}, props.token)
+      .then(function (d) { setKpis(d.kpis); setEscopo(d.escopo); setPorStatus(d.por_status || []); })
+      .catch(function (e) { setErro(e.message); });
   }, [props.token]);
 
-  useEffect(function () { carregar(); }, [carregar]);
+  const ROTULO_STATUS = { negociando: 'Negociando', concluido_ganho: 'Ganhos', concluido_perdido: 'Perdidos' };
+  const COR_STATUS = { negociando: '#eb0024', concluido_ganho: '#191b21', concluido_perdido: '#b9bcc2' };
+  const maiorValor = Math.max(1, Math.max.apply(null, porStatus.map(function (s) { return s.valor; }).concat([0])));
 
   return (
     <div>
       {erro ? <div className="err">{erro}</div> : null}
-      <h2 style={{ margin: '0 0 12px' }}>Dashboard geral &middot; <span className="muted" style={{ fontWeight: 400, fontSize: '13px' }}>todas as negociações no seu escopo</span></h2>
+      <h2 style={{ margin: '0 0 12px' }}>Dashboard geral &middot; <span className="muted" style={{ fontWeight: 400, fontSize: '13px' }}>{escopo || 'todas as negociações no seu escopo'}</span></h2>
       <div className="kpis">
         <div className="kpi"><span>Total de projetos</span><strong>{kpis ? kpis.total : '-'}</strong></div>
         <div className="kpi"><span>Negociando</span><strong>{kpis ? kpis.negociando : '-'}</strong></div>
@@ -1967,18 +1961,82 @@ function Dashboard(props) {
         <div className="kpi"><span>Pivôs</span><strong>{kpis ? kpis.qtde_pivos : '-'}</strong></div>
         <div className="kpi"><span>Área total</span><strong>{kpis ? numero(kpis.area_total_ha, 1) + ' ha' : '-'}</strong></div>
         <div className="kpi"><span>Valor total</span><strong>{kpis ? brl(kpis.valor_total) : '-'}</strong></div>
+        <div className="kpi"><span>Custo/ha médio</span><strong>{kpis ? brl(kpis.custo_por_hectare_medio) : '-'}</strong></div>
       </div>
 
       <div className="panel">
-        <h2>Projetos ({projetos.length}) &middot; <span className="muted">escopo: {escopo || '-'}</span></h2>
-        <p className="muted" style={{ margin: '-6px 0 10px' }}>Clique em um projeto para ver a análise comercial (dashboard por negociação), com todos os seus pivôs.</p>
+        <h2 style={{ marginBottom: '4px' }}>Funil por status</h2>
+        <p className="muted" style={{ margin: '0 0 16px' }}>Quantos projetos, quanto de valor negociado e quanta área estão em cada etapa.</p>
+        {porStatus.map(function (s) {
+          const pct = Math.max(2, Math.round((s.valor / maiorValor) * 100));
+          return (
+            <div key={s.status} style={{ marginBottom: '16px' }}>
+              <div className="row" style={{ justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ fontWeight: 600 }}>{ROTULO_STATUS[s.status] || s.status}</span>
+                <span className="muted" style={{ fontSize: '13px' }}>
+                  {s.qtde} projeto{s.qtde === 1 ? '' : 's'} &middot; {numero(s.area_ha, 1)} ha &middot; <strong style={{ color: 'var(--preto)' }}>{brl(s.valor)}</strong>
+                </span>
+              </div>
+              <div style={{ background: 'var(--cinza)', borderRadius: '6px', height: '10px', overflow: 'hidden' }}>
+                <div style={{ width: pct + '%', height: '100%', borderRadius: '6px', background: COR_STATUS[s.status] || 'var(--texto-sutil)' }} />
+              </div>
+            </div>
+          );
+        })}
+        {porStatus.length === 0 ? <p className="muted">Nenhum projeto no seu escopo ainda.</p> : null}
+      </div>
+    </div>
+  );
+}
+
+// Tela de gestao de projetos -- listar, criar, abrir, excluir. Separada do
+// Dashboard geral (que e so analise/KPI), a pedido explicito: cada tela faz
+// um job.
+function Projetos(props) {
+  const [projetos, setProjetos] = useState([]);
+  const [escopo, setEscopo] = useState('');
+  const [busca, setBusca] = useState('');
+  const [erro, setErro] = useState(null);
+
+  const carregar = useCallback(function () {
+    api('/projetos', {}, props.token).then(setProjetos).catch(function (e) { setErro(e.message); });
+    api('/dashboard', {}, props.token).then(function (d) { setEscopo(d.escopo); }).catch(function () {});
+  }, [props.token]);
+
+  useEffect(function () { carregar(); }, [carregar]);
+
+  const termo = busca.trim().toLowerCase();
+  const filtrados = termo
+    ? projetos.filter(function (p) {
+        return (p.cliente || '').toLowerCase().indexOf(termo) >= 0
+          || (p.municipio || '').toLowerCase().indexOf(termo) >= 0
+          || (p.vendedor_nome || '').toLowerCase().indexOf(termo) >= 0;
+      })
+    : projetos;
+
+  return (
+    <div>
+      {erro ? <div className="err">{erro}</div> : null}
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+        <h2 style={{ margin: 0 }}>Projetos &middot; <span className="muted" style={{ fontWeight: 400, fontSize: '13px' }}>escopo: {escopo || '-'}</span></h2>
+        <NovoProjeto token={props.token} onChange={carregar} onAbrir={props.onAbrirProjeto} />
+      </div>
+
+      <div className="panel">
+        <input
+          type="text"
+          placeholder="Buscar por cliente, município ou vendedor..."
+          value={busca}
+          onChange={function (ev) { setBusca(ev.target.value); }}
+          style={{ marginBottom: '14px', maxWidth: '360px' }}
+        />
         <div style={{ overflowX: 'auto' }}>
         <table>
           <thead>
             <tr><th>Cliente</th><th>Local</th><th>Vendedor</th><th>Status</th><th>Ações</th></tr>
           </thead>
           <tbody>
-            {projetos.map(function (p) {
+            {filtrados.map(function (p) {
               return (
                 <tr key={p.id} className="clicavel" onClick={function () { props.onAbrirProjeto(p.id); }}>
                   <td style={{ fontWeight: 600 }}>{p.cliente}</td>
@@ -1998,6 +2056,7 @@ function Dashboard(props) {
               );
             })}
             {projetos.length === 0 ? <tr><td colSpan={5} className="muted">Nenhum projeto no seu escopo.</td></tr> : null}
+            {projetos.length > 0 && filtrados.length === 0 ? <tr><td colSpan={5} className="muted">Nenhum projeto encontrado para "{busca}".</td></tr> : null}
           </tbody>
         </table>
         </div>
@@ -2261,7 +2320,6 @@ function App() {
   const [projetoAberto, setProjetoAberto] = useState(null);
   const [projetoAtual, setProjetoAtual] = useState(null);
   const [dashboardKey, setDashboardKey] = useState(0);
-  const [resumoPipeline, setResumoPipeline] = useState(null);
   const [secaoProjeto, setSecaoProjeto] = useState('visao-geral');
   const [mostrarTrocarSenha, setMostrarTrocarSenha] = useState(false);
 
@@ -2288,14 +2346,6 @@ function App() {
   }, [token]);
 
   useEffect(function () { atualizarContagemPendentes(); }, [atualizarContagemPendentes]);
-
-  // Resumo rapido do pipeline exibido na barra lateral -- mesma fonte do
-  // Dashboard geral (GET /dashboard), so que o pedido aqui e minimo (so os
-  // 3 contadores) e roda em paralelo, sem acoplar ao componente Dashboard.
-  useEffect(function () {
-    if (!token) return;
-    api('/dashboard', {}, token).then(function (d) { setResumoPipeline(d.kpis); }).catch(function () {});
-  }, [token, dashboardKey]);
 
   function onLogin(t, u) {
     localStorage.setItem('pivot_token', t);
@@ -2330,33 +2380,13 @@ function App() {
           </div>
         </div>
 
-        <NovoProjeto
-          token={token}
-          onChange={function () { setDashboardKey(function (k) { return k + 1; }); }}
-          onAbrir={function (id) { abrirProjeto(id); setTela('dashboard'); }}
-        />
-
-        {resumoPipeline ? (
-          <div className="pipeline" title="Resumo do seu pipeline">
-            <div className="celula">
-              <strong>{resumoPipeline.negociando}</strong>
-              <span>Negociando</span>
-            </div>
-            <div className="celula ganho">
-              <strong>{resumoPipeline.concluidos_ganho}</strong>
-              <span>Ganhos</span>
-            </div>
-            <div className="celula perdido">
-              <strong>{resumoPipeline.concluidos_perdido}</strong>
-              <span>Perdidos</span>
-            </div>
-          </div>
-        ) : null}
-
         <nav className="secao">
           <p className="titulo">Acompanhar</p>
           <button className={(tela === 'dashboard' && !projetoAberto) ? 'ativo' : ''} onClick={function () { setProjetoAtual(null); irPara('dashboard'); }}>
-            <Icone nome="casa" /> Dashboard geral
+            <Icone nome="grafico" /> Dashboard geral
+          </button>
+          <button className={(tela === 'projetos' && !projetoAberto) ? 'ativo' : ''} onClick={function () { setProjetoAtual(null); irPara('projetos'); }}>
+            <Icone nome="caixa" /> Projetos
           </button>
           {podeReceberArquivo ? (
             <button className={(tela === 'pendentes' && !projetoAberto) ? 'ativo' : ''} onClick={function () { setProjetoAtual(null); irPara('pendentes'); }}>
@@ -2425,7 +2455,8 @@ function App() {
             <React.Fragment>
               {tela === 'admin' && podeAdmin ? <Admin token={token} /> : null}
               {tela === 'pendentes' && podeReceberArquivo ? <Pendentes token={token} onMudouContagem={atualizarContagemPendentes} /> : null}
-              {tela === 'dashboard' ? <Dashboard key={dashboardKey} token={token} usuario={usuario} onAbrirProjeto={setProjetoAberto} /> : null}
+              {tela === 'dashboard' ? <Dashboard key={dashboardKey} token={token} /> : null}
+              {tela === 'projetos' ? <Projetos key={dashboardKey} token={token} usuario={usuario} onAbrirProjeto={abrirProjeto} /> : null}
             </React.Fragment>
           )}
         </main>

@@ -1132,11 +1132,29 @@ app.get('/dashboard', auth, async (req, res) => {
     const valorPivos = pivos.reduce(function (s, r) { return s + (Number(r.valor_negociado) || 0); }, 0);
     const valorItensAdicionais = itensAdicionais.reduce(function (s, r) { return s + (Number(r.valor_calculado) || 0); }, 0);
     // Montagem/Servicos Adicionais sao um total unico POR PROJETO -- soma o
-    // ancillary de cada projeto (cada um com seu proprio ICMS por estado).
+    // ancillary de cada projeto (cada um com seu proprio ICMS por estado), e
+    // aproveita o mesmo loop pra acumular o breakdown por status (pra dar pro
+    // dashboard geral mostrar quanto de valor/area esta em cada etapa do funil,
+    // nao so a contagem de projetos).
     let ancillaryTotal = 0;
+    const porStatusMap = {};
     for (const proj of projetos) {
       const { icmsPct, pisPct } = await getConstantesFiscais(proj.estado);
-      ancillaryTotal += calcularAncillaryGrossado(proj, pisPct, icmsPct);
+      const ancillaryProjeto = calcularAncillaryGrossado(proj, pisPct, icmsPct);
+      ancillaryTotal += ancillaryProjeto;
+
+      const pivosProjeto = pivos.filter(function (r) { return r.projeto_id === proj.id; });
+      const itensProjeto = itensAdicionais.filter(function (r) { return r.projeto_id === proj.id; });
+      const valorPivosProjeto = pivosProjeto.reduce(function (s, r) { return s + (Number(r.valor_negociado) || 0); }, 0);
+      const valorItensProjeto = itensProjeto.reduce(function (s, r) { return s + (Number(r.valor_calculado) || 0); }, 0);
+      const areaProjeto = pivosProjeto.reduce(function (s, r) { return s + (Number(r.area_irrigada_ha) || 0); }, 0);
+      const valorProjeto = valorPivosProjeto + valorItensProjeto + ancillaryProjeto;
+
+      const st = proj.status || 'negociando';
+      if (!porStatusMap[st]) porStatusMap[st] = { status: st, qtde: 0, valor: 0, area_ha: 0 };
+      porStatusMap[st].qtde += 1;
+      porStatusMap[st].valor += valorProjeto;
+      porStatusMap[st].area_ha += areaProjeto;
     }
     const valorTotal = valorPivos + ancillaryTotal + valorItensAdicionais;
     const areaTotal = pivos.reduce(function (s, r) { return s + (Number(r.area_irrigada_ha) || 0); }, 0);
@@ -1152,6 +1170,8 @@ app.get('/dashboard', auth, async (req, res) => {
         area_total_ha: areaTotal,
         custo_por_hectare_medio: areaTotal ? valorTotal / areaTotal : 0
       },
+      por_status: ['negociando', 'concluido_ganho', 'concluido_perdido']
+        .map(function (st) { return porStatusMap[st] || { status: st, qtde: 0, valor: 0, area_ha: 0 }; }),
       nivel: req.usuario.nivel,
       escopo: req.usuario.nivel === 'diretor' ? 'todos os projetos' : (req.usuario.nivel === 'gerente' ? 'sua equipe' : 'seus projetos')
     });
