@@ -663,6 +663,51 @@ function EnviarPivo(props) {
   );
 }
 
+// Botao "Encaminhar" -- so aparece numa linha de arquivo ja aceito que NAO
+// foi eu quem enviei (ou seja, eu sou destinatario e aceitei), e so se eu
+// tiver um superior direto pra quem encaminhar (diretor nao tem).
+function BotaoEncaminhar(props) {
+  const [destinatarios, setDestinatarios] = useState(null);
+  const [aberto, setAberto] = useState(false);
+  const [destId, setDestId] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  useEffect(function () {
+    api('/usuarios/destinatarios', {}, props.token).then(setDestinatarios).catch(function () { setDestinatarios([]); });
+  }, [props.token]);
+
+  if (!destinatarios || destinatarios.length === 0) return null;
+
+  function encaminhar() {
+    if (!destId) return;
+    setEnviando(true);
+    api('/arquivos/' + props.arquivoId + '/encaminhar', { method: 'POST', body: JSON.stringify({ destinatario_id: destId }) }, props.token)
+      .then(function () { setMsg('Encaminhado.'); setAberto(false); if (props.onEncaminhado) props.onEncaminhado(); })
+      .catch(function (e) { setMsg('Erro: ' + e.message); })
+      .then(function () { setEnviando(false); });
+  }
+
+  if (!aberto) {
+    return (
+      <span>
+        <button className="mini ghost" onClick={function () { setAberto(true); }}>Encaminhar</button>
+        {msg ? <span className="muted" style={{ fontSize: '11px', marginLeft: '4px' }}>{msg}</span> : null}
+      </span>
+    );
+  }
+  return (
+    <span className="row" style={{ flexWrap: 'nowrap' }}>
+      <select value={destId} onChange={function (e) { setDestId(e.target.value); }} style={{ fontSize: '11px' }}>
+        <option value="">Pra quem?</option>
+        {destinatarios.map(function (u) { return <option key={u.id} value={u.id}>{u.nome} ({u.nivel})</option>; })}
+      </select>
+      <button className="mini" disabled={enviando || !destId} onClick={encaminhar}>{enviando ? '...' : 'Ok'}</button>
+      <button className="mini ghost" onClick={function () { setAberto(false); }}>X</button>
+    </span>
+  );
+}
+
 function ArquivosDoProjeto(props) {
   const [arquivos, setArquivos] = useState([]);
   const [baixando, setBaixando] = useState(null);
@@ -728,7 +773,12 @@ function ArquivosDoProjeto(props) {
                 <td className="muted">{piv ? piv.numero_pivo + ' · v' + piv.revisao : '-'}</td>
                 <td className="muted">{(a.tamanho / 1024).toFixed(0)} KB</td>
                 <td className="muted">{souEu ? 'enviado por você' : 'recebido · ' + a.status}</td>
-                <td><button className="mini ghost" disabled={baixando === a.id} onClick={function () { baixar(a); }}>{baixando === a.id ? '...' : 'Baixar'}</button></td>
+                <td>
+                  <div className="row" style={{ flexWrap: 'nowrap' }}>
+                    <button className="mini ghost" disabled={baixando === a.id} onClick={function () { baixar(a); }}>{baixando === a.id ? '...' : 'Baixar'}</button>
+                    {!souEu && a.status === 'aceito' ? <BotaoEncaminhar arquivoId={a.id} token={props.token} /> : null}
+                  </div>
+                </td>
               </tr>
             );
           })}
@@ -1666,22 +1716,35 @@ function Pendentes(props) {
 
   useEffect(function () { carregar(); }, [carregar]);
 
+  // Aceitar/recusar e a decisao comercial que importa -- NUNCA pode ficar
+  // refem de salvar uma copia local (pasta cancelada, disco cheio, etc).
+  // Por isso agora sao duas acoes independentes: aceitar() so decide; a
+  // tentativa de organizar a copia local acontece depois, best-effort, e um
+  // erro nela nao desfaz o aceite nem impede ver o aviso de sucesso.
   async function aceitar(a) {
-    setStatus('Baixando ' + a.nome + '...');
+    setStatus('Aceitando ' + a.nome + '...');
     try {
-      if (SUPORTA_PASTA_LOCAL) {
+      await api('/arquivos/' + a.id + '/aceitar', { method: 'PUT' }, props.token);
+    } catch (e) {
+      setStatus('Erro ao aceitar: ' + e.message);
+      return;
+    }
+    setStatus(a.nome + ' aceito.');
+    carregar();
+    if (props.onMudouContagem) props.onMudouContagem();
+
+    if (SUPORTA_PASTA_LOCAL) {
+      try {
         const pastaBase = await obterPastaBase();
-        const resp = await fetch(a.caminho);
+        const link = await api('/arquivos/' + a.id + '/link', {}, props.token);
+        const resp = await fetch(link.url);
         const blob = await resp.blob();
         const proj = a.projetos || {};
         await organizarArquivoLocal(pastaBase, proj, blob, a.nome);
+        setStatus(a.nome + ' aceito e organizado na sua pasta local.');
+      } catch (e) {
+        setStatus(a.nome + ' foi aceito normalmente, mas não deu pra salvar a cópia na pasta local: ' + e.message + '. Use "Baixar" na aba Arquivos do projeto se precisar do arquivo.');
       }
-      await api('/arquivos/' + a.id + '/aceitar', { method: 'PUT' }, props.token);
-      setStatus(a.nome + ' aceito e organizado na sua pasta local.');
-      carregar();
-      if (props.onMudouContagem) props.onMudouContagem();
-    } catch (e) {
-      setStatus('Erro: ' + e.message);
     }
   }
   function recusar(a) {

@@ -286,23 +286,16 @@ app.put('/config/global/:chave', auth, exigirNivel('gerente', 'diretor'), async 
   }
 });
 
-// Quem o usuario logado pode escolher como destinatario ao enviar um arquivo:
-// vendedor -> seu gerente + o diretor; gerente -> o diretor; diretor -> ninguem.
+// Quem o usuario logado pode escolher como destinatario ao enviar um
+// arquivo: SO o superior direto -- vendedor -> seu gerente; gerente -> seu
+// diretor; diretor -> ninguem. Sem pular nivel (vendedor nao manda direto
+// pro diretor): a regra do sistema e a cadeia subir um elo de cada vez.
 app.get('/usuarios/destinatarios', auth, async (req, res) => {
   try {
-    const ids = [];
-    if (req.usuario.nivel === 'vendedor' || req.usuario.nivel === 'gerente') {
-      const eu = must(await supabase.from('usuarios').select('superior_id').eq('id', req.usuario.id).maybeSingle());
-      if (eu && eu.superior_id) {
-        ids.push(eu.superior_id);
-        if (req.usuario.nivel === 'vendedor') {
-          const gerente = must(await supabase.from('usuarios').select('superior_id').eq('id', eu.superior_id).maybeSingle());
-          if (gerente && gerente.superior_id) ids.push(gerente.superior_id);
-        }
-      }
-    }
-    if (ids.length === 0) return res.json([]);
-    const rows = must(await supabase.from('usuarios').select('id,nome,email,nivel').in('id', ids));
+    if (req.usuario.nivel !== 'vendedor' && req.usuario.nivel !== 'gerente') return res.json([]);
+    const eu = must(await supabase.from('usuarios').select('superior_id').eq('id', req.usuario.id).maybeSingle());
+    if (!eu || !eu.superior_id) return res.json([]);
+    const rows = must(await supabase.from('usuarios').select('id,nome,email,nivel').eq('id', eu.superior_id));
     res.json(rows);
   } catch (e) {
     res.status(500).json({ erro: String((e && e.message) || e) });
@@ -342,6 +335,43 @@ app.put('/arquivos/:id/recusar', auth, async (req, res) => {
     if (a.destinatario_id !== req.usuario.id) return res.status(403).json({ erro: 'Este arquivo nao foi enviado para voce' });
     const row = must(await supabase.from('arquivos').update({ status: 'recusado' }).eq('id', a.id).select().single());
     res.json(row);
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
+// Encaminha um arquivo ja aceito para o PROXIMO elo da cadeia (gerente ->
+// seu diretor). So quem aceitou o arquivo pode encaminha-lo, e so pro seu
+// superior direto (mesma regra de /usuarios/destinatarios) -- nao cria
+// upload novo nem mexe no pivo/revisao, so uma nova linha pendente
+// apontando pro mesmo arquivo already-aceito.
+app.post('/arquivos/:id/encaminhar', auth, async (req, res) => {
+  try {
+    const a = must(await supabase.from('arquivos').select('*').eq('id', req.params.id).maybeSingle());
+    if (!a) return res.status(404).json({ erro: 'Arquivo nao encontrado' });
+    if (a.destinatario_id !== req.usuario.id || a.status !== 'aceito') {
+      return res.status(403).json({ erro: 'Voce so pode encaminhar um arquivo que recebeu e ja aceitou' });
+    }
+    const destinatarioId = req.body.destinatario_id;
+    if (!destinatarioId) return res.status(400).json({ erro: 'Informe destinatario_id' });
+    const eu = must(await supabase.from('usuarios').select('superior_id').eq('id', req.usuario.id).maybeSingle());
+    if (!eu || eu.superior_id !== destinatarioId) {
+      return res.status(403).json({ erro: 'So e permitido encaminhar para o seu superior direto' });
+    }
+    const row = must(await supabase.from('arquivos').insert({
+      projeto_id: a.projeto_id,
+      pivo_id: a.pivo_id,
+      item_adicional_id: a.item_adicional_id,
+      tipo: a.tipo,
+      nome: a.nome,
+      caminho_storage: a.caminho_storage,
+      tamanho: a.tamanho,
+      mimetype: a.mimetype,
+      enviado_por: req.usuario.id,
+      destinatario_id: destinatarioId,
+      status: 'pendente'
+    }).select().single());
+    res.status(201).json(row);
   } catch (e) {
     res.status(500).json({ erro: String((e && e.message) || e) });
   }
@@ -893,6 +923,41 @@ app.post('/arquivos', auth, upload.single('arquivo'), async (req, res) => {
       destinatario_id: req.body.destinatario_id || null,
       status: req.body.destinatario_id ? 'pendente' : 'aceito'
     }).select().single());
+
+    // Reenvio de versao: se alguem ja tinha ACEITO uma versao anterior
+    // deste mesmo pivo, a nova versao reabre pendente pra essa(s) mesma(s)
+    // pessoa(s) automaticamente -- ninguem aprova sem saber uma proposta
+    // que ficou desatualizada. Nao duplica pra quem ja e o destinatario
+    // escolhido manualmente nesse mesmo upload.
+    if (row.pivo_id) {
+      const aceitesAnteriores = must(await supabase.from('arquivos')
+        .select('destinatario_id')
+        .eq('pivo_id', row.pivo_id)
+        .eq('status', 'aceito')
+        .not('destinatario_id', 'is', null)
+        .neq('id', row.id));
+      const jaNotificar = new Set();
+      if (row.destinatario_id) jaNotificar.add(row.destinatario_id);
+      jaNotificar.add(req.usuario.id);
+      const paraReabrir = Array.from(new Set(aceitesAnteriores.map(function (r) { return r.destinatario_id; })))
+        .filter(function (id) { return !jaNotificar.has(id); });
+      for (const destId of paraReabrir) {
+        await supabase.from('arquivos').insert({
+          projeto_id: projetoId,
+          pivo_id: row.pivo_id,
+          item_adicional_id: row.item_adicional_id,
+          tipo: row.tipo,
+          nome: row.nome,
+          caminho_storage: row.caminho_storage,
+          tamanho: row.tamanho,
+          mimetype: row.mimetype,
+          enviado_por: req.usuario.id,
+          destinatario_id: destId,
+          status: 'pendente'
+        });
+      }
+    }
+
     res.status(201).json(row);
   } catch (e) {
     res.status(500).json({ erro: String((e && e.message) || e) });
