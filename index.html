@@ -1154,29 +1154,71 @@ function LinhaItemAdicional(props) {
 // Montagem/Serv. Adicionais são a SOMA do valor de cada pivô enviado.
 // Por isso o painel aqui é só leitura -- reenviar a planilha (nova revisão)
 // atualiza esses valores automaticamente.
+// Parametros comerciais da negociacao: cada upload de planilha de pivo
+// RESSINCRONIZA estes 5 campos com os valores reais do pedido (ver POST
+// /pivos no servidor) -- isso garante que eles nunca ficam desatualizados
+// em relacao ao pedido oficial. Entre um upload e outro, porem, o vendedor
+// edita livremente aqui pra simular cenarios de desconto/margem na hora
+// (ex. "e se eu desse mais 5% de desconto?") sem precisar mexer na
+// planilha -- e exatamente o uso que a Calculadora comercial ja permitia.
 function ParametrosComerciaisProjeto(props) {
   const p = props.projeto;
-  const campoComercial = function (rotulo, valor, Componente) {
+  const valoresDoProjeto = function (proj) {
+    return {
+      encargos_pct: proj.encargos_pct, desconto_pct: proj.desconto_pct, taxa_flat_pct: proj.taxa_flat_pct,
+      montagem: proj.montagem, servicos_adicionais: proj.servicos_adicionais
+    };
+  };
+  const [campos, setCampos] = useState(valoresDoProjeto(p));
+  const [salvando, setSalvando] = useState(false);
+  const salvoRef = React.useRef(valoresDoProjeto(p));
+
+  useEffect(function () {
+    const v = valoresDoProjeto(p);
+    setCampos(v);
+    salvoRef.current = v;
+  }, [p.encargos_pct, p.desconto_pct, p.taxa_flat_pct, p.montagem, p.servicos_adicionais]);
+
+  function salvarCampos(novosCampos) {
+    const mudou = Object.keys(novosCampos).some(function (k) { return Number(novosCampos[k]) !== Number(salvoRef.current[k]); });
+    setCampos(novosCampos);
+    if (!mudou) return;
+    setSalvando(true);
+    api('/projetos/' + p.id + '/comercial', { method: 'PUT', body: JSON.stringify(novosCampos) }, props.token)
+      .then(function () { salvoRef.current = novosCampos; props.onChange(); })
+      .catch(function (e) { alert('Erro ao salvar: ' + e.message); })
+      .then(function () { setSalvando(false); });
+  }
+
+  const soLeitura = !props.podeEditar;
+  const campoComercial = function (nome, rotulo, Componente) {
     return (
       <div>
         <label>{rotulo}</label>
-        <Componente value={valor} disabled={true} onCommit={function () {}} />
+        <Componente
+          value={campos[nome]}
+          disabled={soLeitura}
+          onCommit={function (n) { salvarCampos(Object.assign({}, campos, { [nome]: n })); }}
+        />
       </div>
     );
   };
 
   return (
     <div className="panel">
-      <h2 style={{ margin: 0 }}>Parâmetros comerciais da negociação</h2>
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <h2 style={{ margin: 0 }}>Parâmetros comerciais da negociação</h2>
+        {salvando ? <span className="muted" style={{ fontSize: '12px' }}>salvando…</span> : null}
+      </div>
       <p className="muted" style={{ marginTop: '4px', marginBottom: '12px' }}>
-        Únicos para toda a negociação (não por pivô/equipamento) — extraídos automaticamente da(s) planilha(s) de pivô enviada(s), sem digitação. Encargos/Desconto/Taxa Flat vêm da última planilha enviada; Montagem e Serv. Adicionais são a soma de todos os pivôs do projeto. Para mudar, reenvie a planilha de pivô atualizada.
+        Únicos para toda a negociação (não por pivô/equipamento). A cada planilha de pivô enviada, estes 5 campos são ressincronizados com o pedido real — entre um envio e outro, edite à vontade aqui pra simular desconto/margem (clique no campo, digite por cima e saia): recalcula o valor negociado na hora, sem mexer na planilha.
       </p>
       <div className="grid-campos">
-        {campoComercial('Encargos', p.encargos_pct, CampoPercentual)}
-        {campoComercial('Desconto', p.desconto_pct, CampoPercentual)}
-        {campoComercial('Taxa Flat', p.taxa_flat_pct, CampoPercentual)}
-        {campoComercial('Montagem (total da negociação)', p.montagem, CampoMonetario)}
-        {campoComercial('Serv. Adicionais (total da negociação)', p.servicos_adicionais, CampoMonetario)}
+        {campoComercial('encargos_pct', 'Encargos', CampoPercentual)}
+        {campoComercial('desconto_pct', 'Desconto', CampoPercentual)}
+        {campoComercial('taxa_flat_pct', 'Taxa Flat', CampoPercentual)}
+        {campoComercial('montagem', 'Montagem (total da negociação)', CampoMonetario)}
+        {campoComercial('servicos_adicionais', 'Serv. Adicionais (total da negociação)', CampoMonetario)}
       </div>
     </div>
   );
