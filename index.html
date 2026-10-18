@@ -614,6 +614,72 @@ function ResumoComercial(props) {
   );
 }
 
+// Calculadora .xlsm do cliente: um arquivo por projeto, que agrega os N
+// pivos daquela negociacao e aplica o "Desconto Pivo". O sistema nao
+// recalcula a Calculadora em si (isso e o write-back, pendente -- ver
+// doc do projeto); aqui so guardamos o arquivo, organizado na mesma pasta
+// local do projeto, com o mesmo versionamento usado pelos pivos, e
+// mostramos qual e a versao atual vinculada ao projeto.
+function EnviarCalculadora(props) {
+  const inputRef = React.useRef(null);
+  const [status, setStatus] = useState(null);
+  const [enviando, setEnviando] = useState(false);
+  const p = props.projeto;
+
+  async function aoSelecionarArquivo(ev) {
+    const arquivo = (ev.target.files || [])[0];
+    ev.target.value = '';
+    if (!arquivo) return;
+    setEnviando(true);
+    setStatus(null);
+    try {
+      let caminhoLocal = null;
+      if (SUPORTA_PASTA_LOCAL) {
+        setStatus('Organizando ' + arquivo.name + ' na pasta local...');
+        const pastaBase = await obterPastaBase();
+        const r = await organizarArquivoLocal(pastaBase, { cliente: p.cliente, estado: p.estado, municipio: p.municipio, fazenda: p.fazenda }, arquivo, arquivo.name);
+        caminhoLocal = r.caminhoRelativo;
+      }
+
+      setStatus('Enviando ' + arquivo.name + '...');
+      const fd = new FormData();
+      fd.append('arquivo', arquivo, arquivo.name);
+      fd.append('projeto_id', p.id);
+      fd.append('tipo', 'calculadora');
+      await api('/arquivos', { method: 'POST', body: fd }, props.token);
+
+      await api('/projetos/' + p.id, {
+        method: 'PUT', body: JSON.stringify({ caminho_local_calculadora: caminhoLocal || arquivo.name })
+      }, props.token);
+
+      setStatus(arquivo.name + ' salva como a Calculadora deste projeto.');
+      props.onChange();
+    } catch (e) {
+      setStatus('Erro: ' + e.message);
+    }
+    setEnviando(false);
+  }
+
+  return (
+    <div className="panel">
+      <h2>Calculadora (.xlsm)</h2>
+      {!SUPORTA_PASTA_LOCAL ? <p className="muted">Este navegador não organiza a pasta local automaticamente (use Chrome/Edge). O arquivo ainda será enviado.</p> : null}
+      {p.caminho_local_calculadora ? (
+        <p className="muted">Arquivo atual: <strong>{p.caminho_local_calculadora}</strong></p>
+      ) : (
+        <p className="muted">Nenhuma Calculadora enviada ainda para este projeto.</p>
+      )}
+      <div className="row">
+        <button className="ghost" disabled={enviando} onClick={function () { inputRef.current.click(); }}>
+          {enviando ? 'Enviando...' : (p.caminho_local_calculadora ? 'Trocar Calculadora' : 'Enviar Calculadora')}
+        </button>
+        <input ref={inputRef} type="file" accept=".xlsm" style={{ display: 'none' }} onChange={aoSelecionarArquivo} />
+      </div>
+      {status ? <p className="muted" style={{ marginTop: '8px' }}>{status}</p> : null}
+    </div>
+  );
+}
+
 function ProjetoDetalhe(props) {
   const [dados, setDados] = useState(null);
   const [erro, setErro] = useState(null);
@@ -652,6 +718,8 @@ function ProjetoDetalhe(props) {
       </div>
 
       <ResumoComercial projeto={p} pivos={dados.pivos} resumo={r} />
+
+      <EnviarCalculadora token={props.token} projeto={p} onChange={carregar} />
 
       <EnviarPivo token={props.token} projeto={p} onChange={carregar} />
 
@@ -806,7 +874,6 @@ function Dashboard(props) {
   const [kpis, setKpis] = useState(null);
   const [escopo, setEscopo] = useState('');
   const [projetos, setProjetos] = useState([]);
-  const [projetoAberto, setProjetoAberto] = useState(null);
   const [erro, setErro] = useState(null);
 
   const carregar = useCallback(function () {
@@ -816,13 +883,10 @@ function Dashboard(props) {
 
   useEffect(function () { carregar(); }, [carregar]);
 
-  if (projetoAberto) {
-    return <ProjetoDetalhe projetoId={projetoAberto} token={props.token} usuario={props.usuario} onVoltar={function () { setProjetoAberto(null); carregar(); }} />;
-  }
-
   return (
     <div>
       {erro ? <div className="err">{erro}</div> : null}
+      <h2 style={{ margin: '0 0 12px' }}>Dashboard geral &middot; <span className="muted" style={{ fontWeight: 400, fontSize: '13px' }}>todas as negociações no seu escopo</span></h2>
       <div className="kpis">
         <div className="kpi"><span>Total de projetos</span><strong>{kpis ? kpis.total : '-'}</strong></div>
         <div className="kpi"><span>Em negociação</span><strong>{kpis ? kpis.em_negociacao : '-'}</strong></div>
@@ -831,8 +895,6 @@ function Dashboard(props) {
         <div className="kpi"><span>Área total</span><strong>{kpis ? numero(kpis.area_total_ha, 1) + ' ha' : '-'}</strong></div>
         <div className="kpi"><span>Valor total</span><strong>{kpis ? brl(kpis.valor_total) : '-'}</strong></div>
       </div>
-
-      <NovoProjeto token={props.token} onChange={carregar} onAbrir={setProjetoAberto} />
 
       <div className="panel">
         <h2>Projetos ({projetos.length}) &middot; <span className="muted">escopo: {escopo || '-'}</span></h2>
@@ -843,7 +905,7 @@ function Dashboard(props) {
           <tbody>
             {projetos.map(function (p) {
               return (
-                <tr key={p.id} className="clicavel" onClick={function () { setProjetoAberto(p.id); }}>
+                <tr key={p.id} className="clicavel" onClick={function () { props.onAbrirProjeto(p.id); }}>
                   <td>{p.cliente}</td>
                   <td>{p.municipio ? p.municipio + '/' : ''}{p.estado || '-'}</td>
                   <td>{p.vendedor_nome || '-'}</td>
@@ -1043,6 +1105,8 @@ function App() {
   const [usuario, setUsuario] = useState(null);
   const [tela, setTela] = useState('dashboard');
   const [qtdePendentes, setQtdePendentes] = useState(0);
+  const [projetoAberto, setProjetoAberto] = useState(null);
+  const [dashboardKey, setDashboardKey] = useState(0);
 
   useEffect(function () {
     const t = localStorage.getItem('pivot_token');
@@ -1092,13 +1156,29 @@ function App() {
             ) : null}
             {podeAdmin ? <button className={tela === 'admin' ? 'ativo' : ''} onClick={function () { setTela('admin'); }}>Admin</button> : null}
           </nav>
+          <NovoProjeto
+            token={token}
+            onChange={function () { setDashboardKey(function (k) { return k + 1; }); }}
+            onAbrir={function (id) { setProjetoAberto(id); setTela('dashboard'); }}
+          />
           <button className="ghost" onClick={onLogout}>Sair</button>
         </div>
       </header>
       <main>
-        {tela === 'admin' && podeAdmin ? <Admin token={token} /> : null}
-        {tela === 'pendentes' && podeReceberArquivo ? <Pendentes token={token} onMudouContagem={atualizarContagemPendentes} /> : null}
-        {tela === 'dashboard' ? <Dashboard token={token} usuario={usuario} /> : null}
+        {projetoAberto ? (
+          <ProjetoDetalhe
+            projetoId={projetoAberto}
+            token={token}
+            usuario={usuario}
+            onVoltar={function () { setProjetoAberto(null); setDashboardKey(function (k) { return k + 1; }); }}
+          />
+        ) : (
+          <React.Fragment>
+            {tela === 'admin' && podeAdmin ? <Admin token={token} /> : null}
+            {tela === 'pendentes' && podeReceberArquivo ? <Pendentes token={token} onMudouContagem={atualizarContagemPendentes} /> : null}
+            {tela === 'dashboard' ? <Dashboard key={dashboardKey} token={token} usuario={usuario} onAbrirProjeto={setProjetoAberto} /> : null}
+          </React.Fragment>
+        )}
       </main>
     </div>
   );
