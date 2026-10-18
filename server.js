@@ -114,6 +114,52 @@ function recalcularValorNegociado(p, icmsPct, pisPct, descRevendaPct) {
   return { valorNegociado: valorNegociado, custoPorHectare: custoPorHectare, pctAncillary: pctAncillary };
 }
 
+// Montagem e Servicos Adicionais sao um total UNICO por negociacao (projeto),
+// nao um valor por pivo/equipamento -- aplicados uma unica vez no total do
+// projeto. Na formula original (coluna N da Calculadora) o termo H/I, apesar
+// de parecer ponderado pelo preco de cada pivo, se simplifica algebricamente
+// para um valor flat "gross-up" (H+I) / ((100-pis-icms-flat)/100) -- por
+// isso e seguro trata-lo como um unico valor agregado para o projeto inteiro
+// em vez de fragmentado por pivo.
+function calcularAncillaryGrossado(projeto, pisPct, icmsPct) {
+  var G = Number(projeto.taxa_flat_pct) || 0;
+  var H = Number(projeto.montagem) || 0;
+  var I = Number(projeto.servicos_adicionais) || 0;
+  if (!H && !I) return 0;
+  var fator = (100 - pisPct - icmsPct - G) / 100;
+  if (!fator || fator <= 0) return 0;
+  var bruto = (H + I) / fator;
+  return Math.ceil(bruto / 100) * 100;
+}
+
+// Recalcula o valor_negociado/custo_por_hectare de TODOS os pivos de um
+// projeto usando os parametros comerciais (Encargos/Desconto/Taxa Flat) do
+// PROJETO -- nunca os do pivo individual. Chamado sempre que: (a) um pivo e
+// enviado/reenviado, ou (b) os parametros comerciais do projeto mudam.
+async function recalcularTodosPivosDoProjeto(projetoId) {
+  const projeto = must(await supabase.from('projetos').select('*').eq('id', projetoId).maybeSingle());
+  if (!projeto) return;
+  const { icmsPct, pisPct, descRevendaPct } = await getConstantesFiscais(projeto.estado);
+  const pivos = must(await supabase.from('pivos').select('*').eq('projeto_id', projetoId));
+  for (const piv of pivos) {
+    const calc = recalcularValorNegociado(Object.assign({}, piv, {
+      encargos_pct: projeto.encargos_pct,
+      desconto_pct: projeto.desconto_pct,
+      taxa_flat_pct: projeto.taxa_flat_pct,
+      montagem: 0,
+      servicos_adicionais: 0
+    }), icmsPct, pisPct, descRevendaPct);
+    await supabase.from('pivos').update({
+      valor_negociado: calc.valorNegociado,
+      custo_por_hectare: calc.custoPorHectare,
+      pct_ancillary: calc.pctAncillary,
+      encargos_pct: projeto.encargos_pct,
+      desconto_pct: projeto.desconto_pct,
+      taxa_flat_pct: projeto.taxa_flat_pct
+    }).eq('id', piv.id);
+  }
+}
+
 async function getConstantesFiscais(estado) {
   var fiscal = must(await supabase.from('config_fiscal').select('*').eq('estado', estado).maybeSingle());
   var globais = must(await supabase.from('config_global').select('*'));
@@ -318,8 +364,10 @@ app.post('/pivos', auth, async (req, res) => {
       .eq('projeto_id', b.projeto_id).eq('numero_pivo', b.numero_pivo));
     const existente = candidatos.find(function (c) { return norm(c.propriedade) === norm(b.propriedade); }) || null;
 
-    const { icmsPct, pisPct, descRevendaPct } = await getConstantesFiscais(b.estado || (must(await supabase.from('projetos').select('estado').eq('id', b.projeto_id).maybeSingle()) || {}).estado);
-
+    // Parametros comerciais (Encargos/Desconto/Taxa Flat/Montagem/Servicos
+    // Adicionais) NAO vem do pivo -- sao unicos por negociacao, definidos no
+    // projeto (ver PUT /projetos/:id/comercial) e aplicados a todos os pivos
+    // dele por recalcularTodosPivosDoProjeto, chamado no final deste handler.
     const dadosTecnicos = {
       projeto_id: b.projeto_id,
       numero_pivo: b.numero_pivo,
@@ -335,30 +383,15 @@ app.post('/pivos', auth, async (req, res) => {
       bomba_nome: b.bomba_nome || null,
       bomba_eficiencia_pct: b.bomba_eficiencia_pct != null ? Number(b.bomba_eficiencia_pct) : null,
       adutora_trechos: Array.isArray(b.adutora_trechos) ? b.adutora_trechos : null,
-      montagem: Number(b.montagem) || 0,
-      servicos_adicionais: Number(b.servicos_adicionais) || 0,
       preco_total: Number(b.preco_total) || 0,
       preco_parte_aerea: Number(b.preco_parte_aerea) || 0,
       preco_pvc: Number(b.preco_pvc) || 0,
       nome_arquivo_original: b.nome_arquivo_original || null,
       caminho_local: b.caminho_local || null,
       linha_calculadora: b.linha_calculadora != null ? b.linha_calculadora : (existente ? existente.linha_calculadora : null),
+      revisao: existente ? (existente.revisao || 1) + 1 : (b.revisao || 1),
       updated_at: new Date().toISOString()
     };
-
-    // Campos de negociacao: preserva o que ja estava, so usa o enviado no
-    // corpo se vier explicitamente (o fluxo de upload normal nunca manda).
-    const campos = Object.assign({}, dadosTecnicos, {
-      encargos_pct: b.encargos_pct != null ? Number(b.encargos_pct) : (existente ? existente.encargos_pct : 10),
-      desconto_pct: b.desconto_pct != null ? Number(b.desconto_pct) : (existente ? existente.desconto_pct : 0),
-      taxa_flat_pct: b.taxa_flat_pct != null ? Number(b.taxa_flat_pct) : (existente ? existente.taxa_flat_pct : 0),
-      revisao: existente ? (existente.revisao || 1) + 1 : (b.revisao || 1)
-    });
-
-    const calc = recalcularValorNegociado(campos, icmsPct, pisPct, descRevendaPct);
-    campos.valor_negociado = calc.valorNegociado;
-    campos.custo_por_hectare = calc.custoPorHectare;
-    campos.pct_ancillary = calc.pctAncillary;
 
     let row;
     if (existente) {
@@ -368,11 +401,14 @@ app.post('/pivos', auth, async (req, res) => {
         dados: existente,
         substituido_por: req.usuario.id
       });
-      row = must(await supabase.from('pivos').update(campos).eq('id', existente.id).select().single());
+      row = must(await supabase.from('pivos').update(dadosTecnicos).eq('id', existente.id).select().single());
     } else {
-      row = must(await supabase.from('pivos').insert(campos).select().single());
+      row = must(await supabase.from('pivos').insert(dadosTecnicos).select().single());
     }
-    res.status(existente ? 200 : 201).json(Object.assign({}, row, { nova_versao: !!existente }));
+
+    await recalcularTodosPivosDoProjeto(b.projeto_id);
+    const atualizado = must(await supabase.from('pivos').select('*').eq('id', row.id).maybeSingle());
+    res.status(existente ? 200 : 201).json(Object.assign({}, atualizado, { nova_versao: !!existente }));
   } catch (e) {
     res.status(500).json({ erro: String((e && e.message) || e) });
   }
@@ -391,50 +427,51 @@ app.get('/pivos/:id/historico', auth, async (req, res) => {
   }
 });
 
-// Edita o desconto (ou encargos/taxa flat) de um pivo e recalcula o Valor
-// Negociado na hora, usando a mesma formula da Calculadora real. Isso NAO
-// escreve no arquivo .xlsm local -- fica registrado em log_desconto com
-// sincronizado_local=false ate o script local aplicar e gravar a nova versao.
-app.put('/pivos/:id/desconto', auth, async (req, res) => {
+// Edita os parametros comerciais da NEGOCIACAO (Encargos/Desconto/Taxa
+// Flat/Montagem/Servicos Adicionais) -- um valor so para o projeto inteiro,
+// nunca por pivo/equipamento -- e recalcula o Valor Negociado de TODOS os
+// pivos do projeto na hora, usando a mesma formula da Calculadora real. Isso
+// NAO escreve no arquivo .xlsm local -- fica registrado em log_desconto (por
+// pivo, pois e o que o write-back futuro vai aplicar arquivo por arquivo)
+// com sincronizado_local=false ate o script local aplicar e gravar.
+app.put('/projetos/:id/comercial', auth, async (req, res) => {
   try {
-    const p = must(await supabase.from('pivos').select('*').eq('id', req.params.id).maybeSingle());
-    if (!p) return res.status(404).json({ erro: 'Pivo nao encontrado' });
-    if (!(await possoAcessarProjeto(req.usuario, p.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
+    const p = must(await supabase.from('projetos').select('*').eq('id', req.params.id).maybeSingle());
+    if (!p) return res.status(404).json({ erro: 'Projeto nao encontrado' });
+    if (!(await possoAcessarProjeto(req.usuario, p.id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
 
     const b = req.body || {};
-    const desconto_pct = b.desconto_pct != null ? Number(b.desconto_pct) : p.desconto_pct;
-    const encargos_pct = b.encargos_pct != null ? Number(b.encargos_pct) : p.encargos_pct;
-    const taxa_flat_pct = b.taxa_flat_pct != null ? Number(b.taxa_flat_pct) : p.taxa_flat_pct;
-    const montagem = b.montagem != null ? Number(b.montagem) : p.montagem;
-    const servicos_adicionais = b.servicos_adicionais != null ? Number(b.servicos_adicionais) : p.servicos_adicionais;
-
-    const { icmsPct, pisPct, descRevendaPct } = await getConstantesFiscais(p.estado);
-    const atualizado = Object.assign({}, p, { desconto_pct, encargos_pct, taxa_flat_pct, montagem, servicos_adicionais });
-    const calc = recalcularValorNegociado(atualizado, icmsPct, pisPct, descRevendaPct);
-
-    const novo = must(await supabase.from('pivos').update({
-      desconto_pct: desconto_pct,
-      encargos_pct: encargos_pct,
-      taxa_flat_pct: taxa_flat_pct,
-      montagem: montagem,
-      servicos_adicionais: servicos_adicionais,
-      valor_negociado: calc.valorNegociado,
-      custo_por_hectare: calc.custoPorHectare,
-      pct_ancillary: calc.pctAncillary,
+    const novo = {
+      encargos_pct: b.encargos_pct != null ? Number(b.encargos_pct) : p.encargos_pct,
+      desconto_pct: b.desconto_pct != null ? Number(b.desconto_pct) : p.desconto_pct,
+      taxa_flat_pct: b.taxa_flat_pct != null ? Number(b.taxa_flat_pct) : p.taxa_flat_pct,
+      montagem: b.montagem != null ? Number(b.montagem) : p.montagem,
+      servicos_adicionais: b.servicos_adicionais != null ? Number(b.servicos_adicionais) : p.servicos_adicionais,
       updated_at: new Date().toISOString()
-    }).eq('id', p.id).select().single());
+    };
 
-    await supabase.from('log_desconto').insert({
-      pivo_id: p.id,
-      usuario_id: req.usuario.id,
-      desconto_anterior: p.desconto_pct,
-      desconto_novo: desconto_pct,
-      valor_negociado_anterior: p.valor_negociado,
-      valor_negociado_novo: calc.valorNegociado,
-      sincronizado_local: false
-    });
+    const pivosAntes = must(await supabase.from('pivos').select('id,desconto_pct,valor_negociado').eq('projeto_id', p.id));
+    const projetoAtualizado = must(await supabase.from('projetos').update(novo).eq('id', p.id).select().single());
+    await recalcularTodosPivosDoProjeto(p.id);
+    const pivosDepois = must(await supabase.from('pivos').select('id,desconto_pct,valor_negociado').eq('projeto_id', p.id));
 
-    res.json(novo);
+    const mapaAntes = {};
+    pivosAntes.forEach(function (r) { mapaAntes[r.id] = r; });
+    for (const depois of pivosDepois) {
+      const antes = mapaAntes[depois.id];
+      if (!antes) continue;
+      await supabase.from('log_desconto').insert({
+        pivo_id: depois.id,
+        usuario_id: req.usuario.id,
+        desconto_anterior: antes.desconto_pct,
+        desconto_novo: depois.desconto_pct,
+        valor_negociado_anterior: antes.valor_negociado,
+        valor_negociado_novo: depois.valor_negociado,
+        sincronizado_local: false
+      });
+    }
+
+    res.json(projetoAtualizado);
   } catch (e) {
     res.status(500).json({ erro: String((e && e.message) || e) });
   }
@@ -502,7 +539,12 @@ app.post('/projetos', auth, exigirNivel('vendedor', 'gerente', 'diretor'), async
       descricao: b.descricao || '',
       status: 'em_negociacao',
       vendedor_id: req.usuario.id,
-      caminho_local_calculadora: b.caminho_local_calculadora || null
+      caminho_local_calculadora: b.caminho_local_calculadora || null,
+      encargos_pct: b.encargos_pct != null ? Number(b.encargos_pct) : 10,
+      desconto_pct: b.desconto_pct != null ? Number(b.desconto_pct) : 0,
+      taxa_flat_pct: b.taxa_flat_pct != null ? Number(b.taxa_flat_pct) : 0,
+      montagem: b.montagem != null ? Number(b.montagem) : 0,
+      servicos_adicionais: b.servicos_adicionais != null ? Number(b.servicos_adicionais) : 0
     }).select().single());
     res.status(201).json(row);
   } catch (e) {
@@ -546,7 +588,10 @@ app.get('/projetos/:id/resumo', auth, async (req, res) => {
     if (!p) return res.status(404).json({ erro: 'Projeto nao encontrado' });
     if (!(await possoAcessarProjeto(req.usuario, p.id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
     const pivos = must(await supabase.from('pivos').select('*').eq('projeto_id', p.id).order('numero_pivo'));
-    const valorTotal = pivos.reduce(function (s, r) { return s + (Number(r.valor_negociado) || 0); }, 0);
+    const valorPivos = pivos.reduce(function (s, r) { return s + (Number(r.valor_negociado) || 0); }, 0);
+    const { icmsPct, pisPct } = await getConstantesFiscais(p.estado);
+    const montagemServicosTotal = calcularAncillaryGrossado(p, pisPct, icmsPct);
+    const valorTotal = valorPivos + montagemServicosTotal;
     const areaTotal = pivos.reduce(function (s, r) { return s + (Number(r.area_irrigada_ha) || 0); }, 0);
     const vendedor = p.vendedor_id ? must(await supabase.from('usuarios').select('nome,email').eq('id', p.vendedor_id).maybeSingle()) : null;
 
@@ -581,6 +626,8 @@ app.get('/projetos/:id/resumo', auth, async (req, res) => {
       resumo: {
         qtde_pivos: pivos.length,
         valor_total: valorTotal,
+        valor_pivos: valorPivos,
+        montagem_servicos_total: montagemServicosTotal,
         area_total_ha: areaTotal,
         area_media_por_pivo_ha: pivos.length ? areaTotal / pivos.length : 0,
         custo_por_hectare_medio: areaTotal ? valorTotal / areaTotal : 0,
@@ -735,7 +782,15 @@ app.get('/dashboard', auth, async (req, res) => {
     const total = projetos.length;
     const emNegociacao = projetos.filter(function (p) { return p.status === 'em_negociacao'; }).length;
     const aprovados = projetos.filter(function (p) { return p.status === 'aprovado'; }).length;
-    const valorTotal = pivos.reduce(function (s, r) { return s + (Number(r.valor_negociado) || 0); }, 0);
+    const valorPivos = pivos.reduce(function (s, r) { return s + (Number(r.valor_negociado) || 0); }, 0);
+    // Montagem/Servicos Adicionais sao um total unico POR PROJETO -- soma o
+    // ancillary de cada projeto (cada um com seu proprio ICMS por estado).
+    let ancillaryTotal = 0;
+    for (const proj of projetos) {
+      const { icmsPct, pisPct } = await getConstantesFiscais(proj.estado);
+      ancillaryTotal += calcularAncillaryGrossado(proj, pisPct, icmsPct);
+    }
+    const valorTotal = valorPivos + ancillaryTotal;
     const areaTotal = pivos.reduce(function (s, r) { return s + (Number(r.area_irrigada_ha) || 0); }, 0);
 
     res.json({

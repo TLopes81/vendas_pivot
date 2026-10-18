@@ -540,53 +540,15 @@ function HistoricoPivo(props) {
 // "Calculo" da Calculadora, onde cada um e uma celula separada e muda o
 // valor negociado na hora. Sem modo de edicao escondido atras de lapis:
 // e so digitar e sair do campo (onBlur) que salva e recalcula tudo.
+// Os parametros comerciais (Encargos/Desconto/Taxa Flat/Montagem/Servicos
+// Adicionais) NAO sao mais editados aqui -- sao unicos por negociacao e
+// ficam no painel "Parametros comerciais da negociacao" (ver
+// ParametrosComerciaisProjeto, acima de ResumoComercial). Esta linha so
+// mostra o que cada pivo gerou: area, valor negociado ja com os parametros
+// do projeto aplicados, custo/ha e versao.
 function LinhaPivo(props) {
   const piv = props.pivo;
-  const valoresDoPivo = function (p) {
-    return {
-      encargos_pct: p.encargos_pct, desconto_pct: p.desconto_pct, taxa_flat_pct: p.taxa_flat_pct,
-      montagem: p.montagem, servicos_adicionais: p.servicos_adicionais
-    };
-  };
-  const [campos, setCampos] = useState(valoresDoPivo(piv));
-  const [salvando, setSalvando] = useState(false);
   const [verHistorico, setVerHistorico] = useState(false);
-  const salvoRef = React.useRef(valoresDoPivo(piv));
-
-  // Se o pivo for atualizado de fora (recarregou a tela, outro usuario
-  // editou), realinha os campos locais com o que veio do servidor.
-  useEffect(function () {
-    const v = valoresDoPivo(piv);
-    setCampos(v);
-    salvoRef.current = v;
-  }, [piv.encargos_pct, piv.desconto_pct, piv.taxa_flat_pct, piv.montagem, piv.servicos_adicionais]);
-
-  function campo(nome, valor) { setCampos(Object.assign({}, campos, { [nome]: valor })); }
-
-  function salvarSeMudou() {
-    const mudou = Object.keys(campos).some(function (k) { return Number(campos[k]) !== Number(salvoRef.current[k]); });
-    if (!mudou) return;
-    setSalvando(true);
-    api('/pivos/' + piv.id + '/desconto', { method: 'PUT', body: JSON.stringify(campos) }, props.token)
-      .then(function () { salvoRef.current = campos; props.onChange(); })
-      .catch(function (e) { alert('Erro ao salvar: ' + e.message); })
-      .then(function () { setSalvando(false); });
-  }
-
-  const soLeitura = !props.podeEditar;
-  const campoComercial = function (nome, sufixo) {
-    return (
-      <td>
-        <input
-          className="campo-mini" type="number" disabled={soLeitura}
-          value={campos[nome]}
-          onChange={function (e) { campo(nome, e.target.value); }}
-          onBlur={salvarSeMudou}
-          onKeyDown={function (e) { if (e.key === 'Enter') e.target.blur(); }}
-        />{sufixo}
-      </td>
-    );
-  };
 
   return (
     <React.Fragment>
@@ -594,15 +556,7 @@ function LinhaPivo(props) {
         <td>{piv.numero_pivo}{piv.propriedade ? <div className="muted" style={{ fontSize: '11px' }}>{piv.propriedade}</div> : null}</td>
         <td>{piv.composicao}</td>
         <td>{numero(piv.area_irrigada_ha, 1)} ha</td>
-        {campoComercial('encargos_pct', '%')}
-        {campoComercial('desconto_pct', '%')}
-        {campoComercial('taxa_flat_pct', '%')}
-        {campoComercial('montagem', '')}
-        {campoComercial('servicos_adicionais', '')}
-        <td>
-          <strong>{brl(piv.valor_negociado)}</strong>
-          {salvando ? <div className="muted" style={{ fontSize: '10px' }}>salvando…</div> : null}
-        </td>
+        <td><strong>{brl(piv.valor_negociado)}</strong></td>
         <td>{brl(piv.custo_por_hectare)}/ha</td>
         <td className="muted">
           v{piv.revisao}{' '}
@@ -611,7 +565,7 @@ function LinhaPivo(props) {
       </tr>
       {verHistorico ? (
         <tr>
-          <td colSpan={11}>
+          <td colSpan={6}>
             <HistoricoPivo pivoId={piv.id} token={props.token} />
           </td>
         </tr>
@@ -740,6 +694,12 @@ function ResumoComercial(props) {
               );
             })}
             {pivos.length === 0 ? <tr><td colSpan={4} className="muted">Nenhum pivô ainda.</td></tr> : null}
+            {total.montagem_servicos_total ? (
+              <tr>
+                <td colSpan={3} className="muted">Montagem e serviços adicionais</td>
+                <td className="muted">{brl(total.montagem_servicos_total)}</td>
+              </tr>
+            ) : null}
             <tr>
               <td colSpan={2}><strong>TOTAL</strong></td>
               <td><strong>{numero(total.area_total_ha, 2)} ha</strong></td>
@@ -753,6 +713,78 @@ function ResumoComercial(props) {
             {p.vendedor_nome}{p.vendedor_email ? ' — ' + p.vendedor_email : ''}
           </p>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+// Parametros comerciais da NEGOCIACAO -- Encargos/Desconto/Taxa Flat/
+// Montagem/Serviços Adicionais são UM valor só para o projeto inteiro
+// (nunca por pivô/equipamento), igual à aba "Calculo" da Calculadora
+// quando o vendedor negocia um desconto para o cliente, não para uma peça
+// de equipamento isolada. Editar aqui recalcula o valor negociado de TODOS
+// os pivôs do projeto de uma vez.
+function ParametrosComerciaisProjeto(props) {
+  const p = props.projeto;
+  const valoresDoProjeto = function (proj) {
+    return {
+      encargos_pct: proj.encargos_pct, desconto_pct: proj.desconto_pct, taxa_flat_pct: proj.taxa_flat_pct,
+      montagem: proj.montagem, servicos_adicionais: proj.servicos_adicionais
+    };
+  };
+  const [campos, setCampos] = useState(valoresDoProjeto(p));
+  const [salvando, setSalvando] = useState(false);
+  const salvoRef = React.useRef(valoresDoProjeto(p));
+
+  useEffect(function () {
+    const v = valoresDoProjeto(p);
+    setCampos(v);
+    salvoRef.current = v;
+  }, [p.encargos_pct, p.desconto_pct, p.taxa_flat_pct, p.montagem, p.servicos_adicionais]);
+
+  function campo(nome, valor) { setCampos(Object.assign({}, campos, { [nome]: valor })); }
+
+  function salvarSeMudou() {
+    const mudou = Object.keys(campos).some(function (k) { return Number(campos[k]) !== Number(salvoRef.current[k]); });
+    if (!mudou) return;
+    setSalvando(true);
+    api('/projetos/' + p.id + '/comercial', { method: 'PUT', body: JSON.stringify(campos) }, props.token)
+      .then(function () { salvoRef.current = campos; props.onChange(); })
+      .catch(function (e) { alert('Erro ao salvar: ' + e.message); })
+      .then(function () { setSalvando(false); });
+  }
+
+  const soLeitura = !props.podeEditar;
+  const campoComercial = function (nome, rotulo, sufixo) {
+    return (
+      <div>
+        <label>{rotulo}</label>
+        <input
+          className="campo-mini" type="number" disabled={soLeitura}
+          value={campos[nome]}
+          onChange={function (e) { campo(nome, e.target.value); }}
+          onBlur={salvarSeMudou}
+          onKeyDown={function (e) { if (e.key === 'Enter') e.target.blur(); }}
+        />{sufixo}
+      </div>
+    );
+  };
+
+  return (
+    <div className="panel">
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <h2 style={{ margin: 0 }}>Parâmetros comerciais da negociação</h2>
+        {salvando ? <span className="muted" style={{ fontSize: '12px' }}>salvando…</span> : null}
+      </div>
+      <p className="muted" style={{ marginTop: '4px', marginBottom: '12px' }}>
+        Únicos para toda a negociação (não por pivô/equipamento) — mude o número e saia do campo: o valor negociado de todos os pivôs deste projeto recalcula na hora.
+      </p>
+      <div className="grid-campos">
+        {campoComercial('encargos_pct', 'Encargos', '%')}
+        {campoComercial('desconto_pct', 'Desconto', '%')}
+        {campoComercial('taxa_flat_pct', 'Taxa Flat', '%')}
+        {campoComercial('montagem', 'Montagem (R$, total da negociação)', '')}
+        {campoComercial('servicos_adicionais', 'Serv. Adicionais (R$, total da negociação)', '')}
       </div>
     </div>
   );
@@ -794,6 +826,8 @@ function ProjetoDetalhe(props) {
         </p>
       </div>
 
+      <ParametrosComerciaisProjeto token={props.token} projeto={p} podeEditar={podeEditar} onChange={carregar} />
+
       <ResumoTecnico resumo={r} />
 
       <ResumoComercial projeto={p} pivos={dados.pivos} resumo={r} />
@@ -803,14 +837,13 @@ function ProjetoDetalhe(props) {
       <div className="panel">
         <h2>Pivôs</h2>
         <p className="muted" style={{ marginTop: '-6px', marginBottom: '10px' }}>
-          Encargos, desconto, taxa flat, montagem e serviços adicionais são editáveis aqui mesmo — igual na Calculadora: mude o número e saia do campo que o valor negociado recalcula na hora.
+          Valor negociado de cada pivô, já com os parâmetros comerciais da negociação (acima) aplicados.
         </p>
         <div style={{ overflowX: 'auto' }}>
         <table>
           <thead>
             <tr>
               <th>Nº Pivô</th><th>Composição</th><th>Área</th>
-              <th>Encargos</th><th>Desconto</th><th>Taxa Flat</th><th>Montagem</th><th>Serv. Adicionais</th>
               <th>Valor Negociado</th><th>Custo/ha</th><th>Versão</th>
             </tr>
           </thead>
@@ -818,7 +851,7 @@ function ProjetoDetalhe(props) {
             {dados.pivos.map(function (piv) {
               return <LinhaPivo key={piv.id} pivo={piv} token={props.token} podeEditar={podeEditar} onChange={carregar} />;
             })}
-            {dados.pivos.length === 0 ? <tr><td colSpan={11} className="muted">Nenhum pivô ainda. Envie a primeira planilha acima.</td></tr> : null}
+            {dados.pivos.length === 0 ? <tr><td colSpan={6} className="muted">Nenhum pivô ainda. Envie a primeira planilha acima.</td></tr> : null}
           </tbody>
         </table>
         </div>

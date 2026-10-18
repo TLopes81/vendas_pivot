@@ -38,6 +38,15 @@ create table projetos (
   vendedor_id uuid references usuarios(id),
   gerente_id uuid references usuarios(id),
   caminho_local_calculadora text, -- caminho da planilha "Calculadora" (.xlsm) deste cliente, na pasta local do usuario
+
+  -- Parametros comerciais da NEGOCIACAO (unicos para o projeto inteiro --
+  -- aplicam-se a todos os pivos dele, nunca um valor por pivo/equipamento).
+  encargos_pct numeric default 10,
+  desconto_pct numeric default 0,   -- "Desconto Pivo" -- o campo que o vendedor edita
+  taxa_flat_pct numeric default 0,
+  montagem numeric default 0,       -- total da negociacao, somado uma unica vez (nao por pivo)
+  servicos_adicionais numeric default 0, -- idem
+
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -45,6 +54,10 @@ create table projetos (
 -- Um registro por pivo (equipamento), extraido automaticamente do arquivo
 -- de proposta individual (.xlsb) e sincronizado com a linha correspondente
 -- na aba "Calculo" da Calculadora (.xlsm) do cliente.
+-- Parametros comerciais (Encargos/Desconto/Taxa Flat/Montagem/Servicos
+-- Adicionais) adicionados em `projetos`, abaixo (sao UNICOS por negociacao --
+-- valem para todos os pivos daquele projeto, nunca um valor por pivo).
+
 create table pivos (
   id uuid primary key default gen_random_uuid(),
   projeto_id uuid references projetos(id) on delete cascade,
