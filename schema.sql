@@ -141,6 +141,8 @@ create table itens_adicionais (
   projeto_id uuid references projetos(id) on delete cascade,
   tipo text not null check (tipo in ('bombeamento','pvc','cabos_eletricos','outro')),
   descricao text,
+  fornecedor text,                          -- PVC: Tigre/Amanco/Corplastic/Outro
+  arquivo_nome_original text,               -- nome do PDF/planilha de orcamento anexado
   valor numeric not null default 0,         -- valor base (R$) antes de desconto/encargos
   encargos_pct numeric default 10,
   desconto_pct numeric default 0,
@@ -159,9 +161,10 @@ create table arquivos (
   id uuid primary key default gen_random_uuid(),
   projeto_id uuid references projetos(id) on delete cascade,
   pivo_id uuid references pivos(id) on delete cascade,
+  item_adicional_id uuid references itens_adicionais(id) on delete cascade,
   nome text,
   caminho text,
-  tipo text default 'pivo' check (tipo in ('pivo','calculadora','outro')),
+  tipo text default 'pivo' check (tipo in ('pivo','calculadora','outro','item_adicional')),
   tamanho bigint,
   mimetype text,
   enviado_por uuid references usuarios(id),

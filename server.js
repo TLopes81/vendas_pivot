@@ -11,6 +11,7 @@ const cors = require('cors');
 const multer = require('multer');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const pdfParse = require('pdf-parse');
 const { createClient } = require('@supabase/supabase-js');
 
 const PORT = process.env.PORT || 3000;
@@ -386,10 +387,13 @@ app.post('/pivos', auth, async (req, res) => {
       .eq('projeto_id', b.projeto_id).eq('numero_pivo', b.numero_pivo));
     const existente = candidatos.find(function (c) { return norm(c.propriedade) === norm(b.propriedade); }) || null;
 
-    // Parametros comerciais (Encargos/Desconto/Taxa Flat/Montagem/Servicos
-    // Adicionais) NAO vem do pivo -- sao unicos por negociacao, definidos no
-    // projeto (ver PUT /projetos/:id/comercial) e aplicados a todos os pivos
-    // dele por recalcularTodosPivosDoProjeto, chamado no final deste handler.
+    // Encargos/Desconto/Taxa Flat/Montagem/Servicos Adicionais NAO sao mais
+    // digitados a mao -- vem extraidos da propria planilha .xlsb do pivo
+    // (linha "Sub Total D - PIVO" da aba PROPOSTA, ver MAPA_TOTAIS no
+    // index.html), e sao unicos por negociacao (projeto). Guardamos aqui o
+    // que ESTE pivo trouxe (montagem/servicos sao o total deste pivo
+    // apenas); logo abaixo sincronizamos o projeto somando todos os pivos
+    // dele, e recalcularTodosPivosDoProjeto aplica o resultado a todos.
     const dadosTecnicos = {
       projeto_id: b.projeto_id,
       numero_pivo: b.numero_pivo,
@@ -408,6 +412,11 @@ app.post('/pivos', auth, async (req, res) => {
       preco_total: Number(b.preco_total) || 0,
       preco_parte_aerea: Number(b.preco_parte_aerea) || 0,
       preco_pvc: Number(b.preco_pvc) || 0,
+      montagem: Number(b.montagem) || 0,
+      servicos_adicionais: Number(b.servicos_adicionais) || 0,
+      encargos_pct: b.encargos_pct != null ? Number(b.encargos_pct) : 10,
+      desconto_pct: b.desconto_pct != null ? Number(b.desconto_pct) : 0,
+      taxa_flat_pct: b.taxa_flat_pct != null ? Number(b.taxa_flat_pct) : 0,
       nome_arquivo_original: b.nome_arquivo_original || null,
       caminho_local: b.caminho_local || null,
       linha_calculadora: b.linha_calculadora != null ? b.linha_calculadora : (existente ? existente.linha_calculadora : null),
@@ -427,6 +436,21 @@ app.post('/pivos', auth, async (req, res) => {
     } else {
       row = must(await supabase.from('pivos').insert(dadosTecnicos).select().single());
     }
+
+    // Sincroniza os parametros comerciais do PROJETO a partir dos dados que
+    // acabaram de ser extraidos da planilha: Encargos/Desconto/Taxa Flat
+    // ficam com o valor desta planilha (sao identicos entre os pivos de uma
+    // mesma negociacao real); Montagem/Servicos Adicionais viram a SOMA de
+    // todos os pivos do projeto (cada planilha traz so o total daquele
+    // pivo).
+    const todosPivosDoProjeto = must(await supabase.from('pivos').select('montagem,servicos_adicionais').eq('projeto_id', b.projeto_id));
+    const somaMontagem = todosPivosDoProjeto.reduce(function (s, p) { return s + (Number(p.montagem) || 0); }, 0);
+    const somaServicos = todosPivosDoProjeto.reduce(function (s, p) { return s + (Number(p.servicos_adicionais) || 0); }, 0);
+    const syncProjeto = { montagem: somaMontagem, servicos_adicionais: somaServicos };
+    if (b.encargos_pct != null) syncProjeto.encargos_pct = Number(b.encargos_pct);
+    if (b.desconto_pct != null) syncProjeto.desconto_pct = Number(b.desconto_pct);
+    if (b.taxa_flat_pct != null) syncProjeto.taxa_flat_pct = Number(b.taxa_flat_pct);
+    await supabase.from('projetos').update(syncProjeto).eq('id', b.projeto_id);
 
     await recalcularTodosPivosDoProjeto(b.projeto_id);
     const atualizado = must(await supabase.from('pivos').select('*').eq('id', row.id).maybeSingle());
@@ -466,6 +490,8 @@ app.post('/itens-adicionais', auth, async (req, res) => {
       projeto_id: b.projeto_id,
       tipo: b.tipo,
       descricao: b.descricao || null,
+      fornecedor: b.fornecedor || null,
+      arquivo_nome_original: b.arquivo_nome_original || null,
       valor: Number(b.valor) || 0,
       encargos_pct: b.encargos_pct != null ? Number(b.encargos_pct) : 10,
       desconto_pct: b.desconto_pct != null ? Number(b.desconto_pct) : 0,
@@ -505,6 +531,34 @@ app.put('/itens-adicionais/:id', auth, async (req, res) => {
 
     const row = must(await supabase.from('itens_adicionais').update(item).eq('id', req.params.id).select().single());
     res.json(row);
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
+// Extrai automaticamente o valor negociado de um orcamento em PDF de
+// fornecedor de PVC. Hoje so sabemos o layout real do Tigre (2 PDFs reais
+// conferidos): procura a linha "VALOR NEGOCIADO" perto do fim do pedido.
+// Amanco/Corplastic ainda nao tem layout confirmado -- quando chegar um PDF
+// real desses fornecedores, da pra estender este parser do mesmo jeito.
+const itensPdfUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+app.post('/itens-adicionais/extrair-pdf', auth, itensPdfUpload.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ erro: 'Nenhum arquivo enviado' });
+    const fornecedor = String(req.body.fornecedor || '').trim();
+    const dados = await pdfParse(req.file.buffer);
+    const texto = dados.text || '';
+
+    if (fornecedor === 'Tigre') {
+      const m = texto.match(/VALOR\s+NEGOCIADO\s*R?\$?\s*([\d.,]+)/i);
+      if (m) {
+        const valor = parseFloat(m[1].replace(/\./g, '').replace(',', '.'));
+        if (!isNaN(valor) && valor > 0) {
+          return res.json({ valor: valor, origem: 'VALOR NEGOCIADO (Tigre)' });
+        }
+      }
+    }
+    res.json({ valor: null, origem: null });
   } catch (e) {
     res.status(500).json({ erro: String((e && e.message) || e) });
   }
@@ -819,10 +873,11 @@ app.post('/arquivos', auth, upload.single('arquivo'), async (req, res) => {
 
     const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(caminhoStorage);
 
-    const tipo = ['pivo', 'calculadora', 'outro'].indexOf(req.body.tipo) !== -1 ? req.body.tipo : 'pivo';
+    const tipo = ['pivo', 'calculadora', 'outro', 'item_adicional'].indexOf(req.body.tipo) !== -1 ? req.body.tipo : 'pivo';
     const row = must(await supabase.from('arquivos').insert({
       projeto_id: projetoId,
       pivo_id: req.body.pivo_id || null,
+      item_adicional_id: req.body.item_adicional_id || null,
       tipo: tipo,
       nome: nomeOriginal,
       caminho: pub.publicUrl,

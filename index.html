@@ -254,7 +254,18 @@ const MAPA_PROPOSTA = {
   propriedade: [5, 5], municipio: [5, 14], estado: [5, 18],
   modelo: [6, 9], marca: [6, 11], composicao: [7, 5],
 };
-const MAPA_TOTAIS = { preco_total: [260, 28], preco_parte_aerea: [259, 28], montagem: [260, 26], servicos_adicionais: [260, 27] };
+// Encargos/Desconto/Taxa Flat NAO sao mais digitados a mao -- vem direto da
+// linha "Sub Total D - PIVO" da aba PROPOSTA (mesma fonte ja usada para
+// preco_total/preco_parte_aerea/montagem/servicos_adicionais), coordenadas
+// validadas contra 4 planilhas reais do mesmo cliente (valores identicos:
+// encargos=10%, desconto=40%, taxa flat=0% nas 4). Montagem/Servicos
+// Adicionais aqui sao o total DESTE pivo apenas -- o servidor soma com os
+// demais pivos do projeto para chegar no total da negociacao.
+const MAPA_TOTAIS = {
+  preco_total: [260, 28], preco_parte_aerea: [259, 28],
+  montagem: [260, 26], servicos_adicionais: [260, 27],
+  encargos_pct: [259, 23], desconto_pct: [259, 24], taxa_flat_pct: [259, 25],
+};
 const MAPA_FICHA = {
   area_irrigada_ha: [23, 9],
   potencia_motobomba_cv: [6, 94],
@@ -890,13 +901,42 @@ function StatusProjeto(props) {
 // desconto/encargos/taxa flat/servicos adicionais (diferente entre si e
 // diferente dos parametros gerais do pivo, acima). So existe quando esse
 // item NAO esta embutido no preco de nenhum pivo (.xlsb) do projeto.
+const FORNECEDORES_PVC = ['Tigre', 'Amanco', 'Corplastic', 'Outro'];
+
 function ItensAdicionaisProjeto(props) {
   const itens = props.itens || [];
   const [mostrarForm, setMostrarForm] = useState(false);
   const [novoTipo, setNovoTipo] = useState('bombeamento');
   const [novoValor, setNovoValor] = useState('');
+  const [novoFornecedor, setNovoFornecedor] = useState('Tigre');
+  const [arquivoPdf, setArquivoPdf] = useState(null);
+  const [extraindo, setExtraindo] = useState(false);
+  const [extracaoMsg, setExtracaoMsg] = useState(null);
   const [erro, setErro] = useState(null);
   const [salvando, setSalvando] = useState(false);
+
+  async function aoSelecionarPdf(ev) {
+    const arquivo = ev.target.files && ev.target.files[0];
+    if (!arquivo) return;
+    setArquivoPdf(arquivo);
+    setExtracaoMsg(null);
+    setExtraindo(true);
+    try {
+      const fd = new FormData();
+      fd.append('arquivo', arquivo, arquivo.name);
+      fd.append('fornecedor', novoFornecedor);
+      const r = await api('/itens-adicionais/extrair-pdf', { method: 'POST', body: fd }, props.token);
+      if (r.valor) {
+        setNovoValor(numero(r.valor, 2));
+        setExtracaoMsg('Valor extraído automaticamente do PDF (' + r.origem + '): confira antes de adicionar.');
+      } else {
+        setExtracaoMsg('Não consegui extrair o valor automaticamente desse PDF -- preencha "Valor base" manualmente. O arquivo fica anexado ao item mesmo assim.');
+      }
+    } catch (e) {
+      setExtracaoMsg('Não consegui ler esse PDF automaticamente -- preencha "Valor base" manualmente. O arquivo fica anexado ao item mesmo assim.');
+    }
+    setExtraindo(false);
+  }
 
   function adicionar() {
     const valor = parseFloat(String(novoValor).replace(/\./g, '').replace(',', '.'));
@@ -905,9 +945,20 @@ function ItensAdicionaisProjeto(props) {
     setErro(null);
     api('/itens-adicionais', {
       method: 'POST',
-      body: JSON.stringify({ projeto_id: props.projetoId, tipo: novoTipo, valor: valor })
+      body: JSON.stringify(Object.assign({ projeto_id: props.projetoId, tipo: novoTipo, valor: valor },
+        novoTipo === 'pvc' ? { fornecedor: novoFornecedor, arquivo_nome_original: arquivoPdf ? arquivoPdf.name : null } : {}))
     }, props.token)
-      .then(function () { setMostrarForm(false); setNovoValor(''); props.onChange(); })
+      .then(function (item) {
+        if (arquivoPdf) {
+          const fd = new FormData();
+          fd.append('arquivo', arquivoPdf, arquivoPdf.name);
+          fd.append('projeto_id', props.projetoId);
+          fd.append('item_adicional_id', item.id);
+          fd.append('tipo', 'item_adicional');
+          return api('/arquivos', { method: 'POST', body: fd }, props.token);
+        }
+      })
+      .then(function () { setMostrarForm(false); setNovoValor(''); setArquivoPdf(null); setExtracaoMsg(null); props.onChange(); })
       .catch(function (e) { setErro(e.message); })
       .then(function () { setSalvando(false); });
   }
@@ -929,20 +980,38 @@ function ItensAdicionaisProjeto(props) {
       </p>
 
       {mostrarForm ? (
-        <div className="grid-campos" style={{ marginBottom: '12px' }}>
-          <div>
-            <label>Tipo</label>
-            <select value={novoTipo} onChange={function (e) { setNovoTipo(e.target.value); }}>
-              {Object.keys(ROTULOS_TIPO_ITEM).map(function (k) { return <option key={k} value={k}>{ROTULOS_TIPO_ITEM[k]}</option>; })}
-            </select>
+        <div style={{ marginBottom: '12px' }}>
+          <div className="grid-campos">
+            <div>
+              <label>Tipo</label>
+              <select value={novoTipo} onChange={function (e) { setNovoTipo(e.target.value); }}>
+                {Object.keys(ROTULOS_TIPO_ITEM).map(function (k) { return <option key={k} value={k}>{ROTULOS_TIPO_ITEM[k]}</option>; })}
+              </select>
+            </div>
+            {novoTipo === 'pvc' ? (
+              <div>
+                <label>Fornecedor</label>
+                <select value={novoFornecedor} onChange={function (e) { setNovoFornecedor(e.target.value); }}>
+                  {FORNECEDORES_PVC.map(function (f) { return <option key={f} value={f}>{f}</option>; })}
+                </select>
+              </div>
+            ) : null}
+            <div>
+              <label>Valor base (R$)</label>
+              <input className="campo-mini campo-monetario" type="text" inputMode="decimal" value={novoValor} onChange={function (e) { setNovoValor(e.target.value); }} placeholder="0,00" />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+              <button onClick={adicionar} disabled={salvando}>{salvando ? 'Adicionando...' : 'Adicionar'}</button>
+            </div>
           </div>
-          <div>
-            <label>Valor base (R$)</label>
-            <input className="campo-mini campo-monetario" type="text" inputMode="decimal" value={novoValor} onChange={function (e) { setNovoValor(e.target.value); }} placeholder="0,00" />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-            <button onClick={adicionar} disabled={salvando}>{salvando ? 'Adicionando...' : 'Adicionar'}</button>
-          </div>
+          {novoTipo === 'pvc' ? (
+            <div style={{ marginTop: '8px' }}>
+              <label>Orçamento do fornecedor em PDF (opcional -- {novoFornecedor === 'Tigre' ? 'valor extraído automaticamente' : 'preencha o valor manualmente'})</label>
+              <input type="file" accept=".pdf" onChange={aoSelecionarPdf} disabled={extraindo} />
+              {extraindo ? <p className="muted" style={{ fontSize: '11px' }}>Lendo PDF...</p> : null}
+              {extracaoMsg ? <p className="muted" style={{ fontSize: '11px' }}>{extracaoMsg}</p> : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
       {erro ? <div className="err" style={{ marginBottom: '8px' }}>{erro}</div> : null}
@@ -1007,7 +1076,11 @@ function LinhaItemAdicional(props) {
 
   return (
     <tr>
-      <td>{ROTULOS_TIPO_ITEM[item.tipo] || item.tipo}{item.descricao ? <div className="muted" style={{ fontSize: '11px' }}>{item.descricao}</div> : null}</td>
+      <td>
+        {ROTULOS_TIPO_ITEM[item.tipo] || item.tipo}
+        {item.fornecedor ? <div className="muted" style={{ fontSize: '11px' }}>{item.fornecedor}{item.arquivo_nome_original ? ' · ' + item.arquivo_nome_original : ''}</div> : null}
+        {item.descricao ? <div className="muted" style={{ fontSize: '11px' }}>{item.descricao}</div> : null}
+      </td>
       {campo('valor', CampoMonetario)}
       {campo('encargos_pct', CampoPercentual)}
       {campo('desconto_pct', CampoPercentual)}
@@ -1021,68 +1094,35 @@ function LinhaItemAdicional(props) {
 
 // Parametros comerciais da NEGOCIACAO -- Encargos/Desconto/Taxa Flat/
 // Montagem/Serviços Adicionais são UM valor só para o projeto inteiro
-// (nunca por pivô/equipamento), igual à aba "Calculo" da Calculadora
-// quando o vendedor negocia um desconto para o cliente, não para uma peça
-// de equipamento isolada. Editar aqui recalcula o valor negociado de TODOS
-// os pivôs do projeto de uma vez.
+// (nunca por pivô/equipamento). ZERO digitação manual: vêm direto da(s)
+// planilha(s) .xlsb de pivô enviadas (linha "Sub Total D - PIVÔ" da aba
+// PROPOSTA) -- Encargos/Desconto/Taxa Flat são sincronizados a cada envio,
+// Montagem/Serv. Adicionais são a SOMA do valor de cada pivô enviado.
+// Por isso o painel aqui é só leitura -- reenviar a planilha (nova revisão)
+// atualiza esses valores automaticamente.
 function ParametrosComerciaisProjeto(props) {
   const p = props.projeto;
-  const valoresDoProjeto = function (proj) {
-    return {
-      encargos_pct: proj.encargos_pct, desconto_pct: proj.desconto_pct, taxa_flat_pct: proj.taxa_flat_pct,
-      montagem: proj.montagem, servicos_adicionais: proj.servicos_adicionais
-    };
-  };
-  const [campos, setCampos] = useState(valoresDoProjeto(p));
-  const [salvando, setSalvando] = useState(false);
-  const salvoRef = React.useRef(valoresDoProjeto(p));
-
-  useEffect(function () {
-    const v = valoresDoProjeto(p);
-    setCampos(v);
-    salvoRef.current = v;
-  }, [p.encargos_pct, p.desconto_pct, p.taxa_flat_pct, p.montagem, p.servicos_adicionais]);
-
-  function salvarCampos(novosCampos) {
-    const mudou = Object.keys(novosCampos).some(function (k) { return Number(novosCampos[k]) !== Number(salvoRef.current[k]); });
-    setCampos(novosCampos);
-    if (!mudou) return;
-    setSalvando(true);
-    api('/projetos/' + p.id + '/comercial', { method: 'PUT', body: JSON.stringify(novosCampos) }, props.token)
-      .then(function () { salvoRef.current = novosCampos; props.onChange(); })
-      .catch(function (e) { alert('Erro ao salvar: ' + e.message); })
-      .then(function () { setSalvando(false); });
-  }
-
-  const soLeitura = !props.podeEditar;
-  const campoComercial = function (nome, rotulo, Componente) {
+  const campoComercial = function (rotulo, valor, Componente) {
     return (
       <div>
         <label>{rotulo}</label>
-        <Componente
-          value={campos[nome]}
-          disabled={soLeitura}
-          onCommit={function (n) { salvarCampos(Object.assign({}, campos, { [nome]: n })); }}
-        />
+        <Componente value={valor} disabled={true} onCommit={function () {}} />
       </div>
     );
   };
 
   return (
     <div className="panel">
-      <div className="row" style={{ justifyContent: 'space-between' }}>
-        <h2 style={{ margin: 0 }}>Parâmetros comerciais da negociação</h2>
-        {salvando ? <span className="muted" style={{ fontSize: '12px' }}>salvando…</span> : null}
-      </div>
+      <h2 style={{ margin: 0 }}>Parâmetros comerciais da negociação</h2>
       <p className="muted" style={{ marginTop: '4px', marginBottom: '12px' }}>
-        Únicos para toda a negociação (não por pivô/equipamento) — clique no campo, digite por cima e saia (Tab/Enter): o valor negociado de todos os pivôs deste projeto recalcula na hora.
+        Únicos para toda a negociação (não por pivô/equipamento) — extraídos automaticamente da(s) planilha(s) de pivô enviada(s), sem digitação. Encargos/Desconto/Taxa Flat vêm da última planilha enviada; Montagem e Serv. Adicionais são a soma de todos os pivôs do projeto. Para mudar, reenvie a planilha de pivô atualizada.
       </p>
       <div className="grid-campos">
-        {campoComercial('encargos_pct', 'Encargos', CampoPercentual)}
-        {campoComercial('desconto_pct', 'Desconto', CampoPercentual)}
-        {campoComercial('taxa_flat_pct', 'Taxa Flat', CampoPercentual)}
-        {campoComercial('montagem', 'Montagem (total da negociação)', CampoMonetario)}
-        {campoComercial('servicos_adicionais', 'Serv. Adicionais (total da negociação)', CampoMonetario)}
+        {campoComercial('Encargos', p.encargos_pct, CampoPercentual)}
+        {campoComercial('Desconto', p.desconto_pct, CampoPercentual)}
+        {campoComercial('Taxa Flat', p.taxa_flat_pct, CampoPercentual)}
+        {campoComercial('Montagem (total da negociação)', p.montagem, CampoMonetario)}
+        {campoComercial('Serv. Adicionais (total da negociação)', p.servicos_adicionais, CampoMonetario)}
       </div>
     </div>
   );
