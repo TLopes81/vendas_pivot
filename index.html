@@ -3,6 +3,11 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- Sem isso, o Safari/iOS "detecta" endereco (ex. "FAZENDA X -- CIDADE/UF")
+     e numero de telefone como link e pinta de azul sublinhado por conta
+     propria, por fora de qualquer CSS nosso -- e exatamente o que deixava o
+     cabecalho do projeto com aquele texto azul feio no celular. -->
+<meta name="format-detection" content="telephone=no, address=no, email=no" />
 <title>PIVOT Deal Manager WEB</title>
 <style>
   /* Paleta extraida do site institucional pivot.com.br (preto/cinza neutro + vermelho de
