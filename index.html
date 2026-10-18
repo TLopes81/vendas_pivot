@@ -45,6 +45,8 @@
   .panel h2 { margin:0 0 12px; font-size:15px; }
   .muted { font-size:12px; color:var(--texto-sutil); }
   .campo-mini { width:76px; height:30px; padding:0 8px; text-align:right; }
+  .campo-mini.campo-percentual { width:88px; }
+  .campo-mini.campo-monetario { width:140px; }
   .voltar { background:none; color:var(--vermelho); height:auto; padding:0; font-size:13px; font-weight:600; margin-bottom:12px; }
   .grid-campos { display:grid; grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); gap:8px; margin:8px 0; }
   .grid-campos label { margin:0 0 2px; font-size:10px; }
@@ -112,6 +114,44 @@ function brl(v) {
 function numero(v, casas) {
   return (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: casas || 0, maximumFractionDigits: casas || 0 });
 }
+
+// Campos numericos formatados (% com separador de milhar e 2 casas decimais,
+// R$ no padrao brasileiro) -- o valor fica formatado DENTRO do proprio campo
+// (ex: "10,00%", "R$ 1.234,56"), nao como texto solto do lado de fora. Ao
+// focar, troca para edicao em texto puro (selecionado inteiro, so digitar
+// por cima); ao sair do campo, reformata e confirma (onCommit).
+function CampoFormatado(props) {
+  const [editando, setEditando] = useState(false);
+  const [texto, setTexto] = useState('');
+
+  function iniciarEdicao(ev) {
+    setTexto(numero(props.value, 2));
+    setEditando(true);
+    const alvo = ev.target;
+    setTimeout(function () { alvo.select(); }, 0);
+  }
+  function commitar() {
+    const limpo = texto.replace(/\./g, '').replace(',', '.').trim();
+    const n = parseFloat(limpo);
+    setEditando(false);
+    if (!isNaN(n)) props.onCommit(n);
+  }
+
+  const formatado = props.prefixo ? props.prefixo + numero(props.value, 2) : numero(props.value, 2) + (props.sufixo || '');
+
+  return (
+    <input
+      className={'campo-mini ' + (props.classe || '')} type="text" inputMode="decimal" disabled={props.disabled}
+      value={editando ? texto : formatado}
+      onFocus={iniciarEdicao}
+      onChange={function (e) { setTexto(e.target.value); }}
+      onBlur={commitar}
+      onKeyDown={function (e) { if (e.key === 'Enter') e.target.blur(); }}
+    />
+  );
+}
+function CampoPercentual(props) { return <CampoFormatado {...props} sufixo="%" classe="campo-percentual" />; }
+function CampoMonetario(props) { return <CampoFormatado {...props} prefixo="R$ " classe="campo-monetario" />; }
 
 // ============================================================================
 // Organizacao local de arquivos (File System Access API -- Chrome/Edge).
@@ -742,30 +782,27 @@ function ParametrosComerciaisProjeto(props) {
     salvoRef.current = v;
   }, [p.encargos_pct, p.desconto_pct, p.taxa_flat_pct, p.montagem, p.servicos_adicionais]);
 
-  function campo(nome, valor) { setCampos(Object.assign({}, campos, { [nome]: valor })); }
-
-  function salvarSeMudou() {
-    const mudou = Object.keys(campos).some(function (k) { return Number(campos[k]) !== Number(salvoRef.current[k]); });
+  function salvarCampos(novosCampos) {
+    const mudou = Object.keys(novosCampos).some(function (k) { return Number(novosCampos[k]) !== Number(salvoRef.current[k]); });
+    setCampos(novosCampos);
     if (!mudou) return;
     setSalvando(true);
-    api('/projetos/' + p.id + '/comercial', { method: 'PUT', body: JSON.stringify(campos) }, props.token)
-      .then(function () { salvoRef.current = campos; props.onChange(); })
+    api('/projetos/' + p.id + '/comercial', { method: 'PUT', body: JSON.stringify(novosCampos) }, props.token)
+      .then(function () { salvoRef.current = novosCampos; props.onChange(); })
       .catch(function (e) { alert('Erro ao salvar: ' + e.message); })
       .then(function () { setSalvando(false); });
   }
 
   const soLeitura = !props.podeEditar;
-  const campoComercial = function (nome, rotulo, sufixo) {
+  const campoComercial = function (nome, rotulo, Componente) {
     return (
       <div>
         <label>{rotulo}</label>
-        <input
-          className="campo-mini" type="number" disabled={soLeitura}
+        <Componente
           value={campos[nome]}
-          onChange={function (e) { campo(nome, e.target.value); }}
-          onBlur={salvarSeMudou}
-          onKeyDown={function (e) { if (e.key === 'Enter') e.target.blur(); }}
-        />{sufixo}
+          disabled={soLeitura}
+          onCommit={function (n) { salvarCampos(Object.assign({}, campos, { [nome]: n })); }}
+        />
       </div>
     );
   };
@@ -777,14 +814,14 @@ function ParametrosComerciaisProjeto(props) {
         {salvando ? <span className="muted" style={{ fontSize: '12px' }}>salvando…</span> : null}
       </div>
       <p className="muted" style={{ marginTop: '4px', marginBottom: '12px' }}>
-        Únicos para toda a negociação (não por pivô/equipamento) — mude o número e saia do campo: o valor negociado de todos os pivôs deste projeto recalcula na hora.
+        Únicos para toda a negociação (não por pivô/equipamento) — clique no campo, digite por cima e saia (Tab/Enter): o valor negociado de todos os pivôs deste projeto recalcula na hora.
       </p>
       <div className="grid-campos">
-        {campoComercial('encargos_pct', 'Encargos', '%')}
-        {campoComercial('desconto_pct', 'Desconto', '%')}
-        {campoComercial('taxa_flat_pct', 'Taxa Flat', '%')}
-        {campoComercial('montagem', 'Montagem (R$, total da negociação)', '')}
-        {campoComercial('servicos_adicionais', 'Serv. Adicionais (R$, total da negociação)', '')}
+        {campoComercial('encargos_pct', 'Encargos', CampoPercentual)}
+        {campoComercial('desconto_pct', 'Desconto', CampoPercentual)}
+        {campoComercial('taxa_flat_pct', 'Taxa Flat', CampoPercentual)}
+        {campoComercial('montagem', 'Montagem (total da negociação)', CampoMonetario)}
+        {campoComercial('servicos_adicionais', 'Serv. Adicionais (total da negociação)', CampoMonetario)}
       </div>
     </div>
   );
