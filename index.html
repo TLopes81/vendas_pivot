@@ -57,6 +57,11 @@
   .tag.pendente { background:#ececed; color:#32323a; }
   .panel { background:#fff; border:1px solid var(--borda); border-radius:12px; padding:16px; margin-bottom:18px; }
   .panel h2 { margin:0 0 12px; font-size:15px; }
+  .cabecalho-projeto { position:sticky; top:0; z-index:5; }
+  .cabecalho-projeto-topo { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; }
+  .cabecalho-projeto-id h2 { margin:0 0 4px; font-size:19px; }
+  .cabecalho-projeto-id p { margin:0; }
+  .cabecalho-projeto-stats { margin-top:14px; padding-top:12px; border-top:1px solid var(--borda); font-size:13px; color:var(--texto-sutil); }
   .muted { font-size:12px; color:var(--texto-sutil); }
   .campo-mini { width:76px; height:30px; padding:0 8px; text-align:right; }
   .campo-mini.campo-percentual { width:88px; }
@@ -133,7 +138,7 @@ const API = '';
 // verdade (F5/Ctrl+Shift+R), nunca so navegando dentro do app. Isso aqui e
 // o jeito de confirmar se uma tela esta mesmo na ultima versao publicada
 // antes de reportar algo como bug -- bump a cada deploy.
-const VERSAO_APP = '2026-10-18.8';
+const VERSAO_APP = '2026-10-18.9';
 
 function api(path, options, token) {
   const opts = options || {};
@@ -1623,15 +1628,19 @@ function ProjetoDetalhe(props) {
     <div>
       <button className="voltar" onClick={props.onVoltar}>&larr; Voltar aos projetos</button>
 
-      <div className="panel">
-        <h2>{p.cliente}</h2>
-        <p className="muted" style={{ marginBottom: '8px' }}>
-          {p.fazenda ? p.fazenda + ' — ' : ''}{p.municipio ? p.municipio + '/' : ''}{p.estado || ''}
-        </p>
-        <StatusProjeto token={props.token} projeto={p} podeEditar={podeEditar} onChange={carregar} />
-        <p className="muted" style={{ margin: '8px 0 0' }}>
+      <div className="panel cabecalho-projeto">
+        <div className="cabecalho-projeto-topo">
+          <div className="cabecalho-projeto-id">
+            <h2>{p.cliente}</h2>
+            <p className="muted">
+              {p.fazenda ? p.fazenda + ' — ' : ''}{p.municipio ? p.municipio + '/' : ''}{p.estado || ''}
+            </p>
+          </div>
+          <StatusProjeto token={props.token} projeto={p} podeEditar={podeEditar} onChange={carregar} />
+        </div>
+        <div className="cabecalho-projeto-stats">
           {r.qtde_pivos} pivô{r.qtde_pivos === 1 ? '' : 's'} &middot; {numero(r.area_total_ha, 1)} ha &middot; {brl(r.valor_total)} negociado &middot; {brl(r.custo_por_hectare_medio)}/ha
-        </p>
+        </div>
       </div>
 
       {secao === 'visao-geral' ? (
