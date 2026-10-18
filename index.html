@@ -250,18 +250,74 @@ function idbSet(chave, valor) {
   });
 }
 
-async function obterPastaBase() {
+// Importante (e e exatamente o que gera a pergunta "mas o sistema nao
+// perguntou onde salvar"): a pasta so e perguntada (showDirectoryPicker) na
+// PRIMEIRA vez que o navegador precisa dela. Depois disso o handle da pasta
+// fica guardado no IndexedDB deste navegador/perfil (pivot-local), e se a
+// permissao ainda estiver valida ele e reusado silenciosamente -- sem abrir
+// dialogo nenhum -- em todo upload seguinte. Isso e o esperado (senao o
+// usuario teria que escolher a pasta toda vez), mas sem nenhum indicador na
+// tela disso fica parecendo magica. Por seguranca do proprio navegador, a
+// API nunca revela o caminho absoluto (tipo C:\Users\...) -- so o nome da
+// pasta escolhida (handle.name). Ver <PastaLocalStatus> abaixo, que mostra
+// esse nome e deixa trocar a pasta.
+async function obterPastaBase(forcarEscolha) {
   if (!SUPORTA_PASTA_LOCAL) return null;
-  let handle = await idbGet('pasta_base').catch(function () { return null; });
-  if (handle) {
-    const perm = await handle.queryPermission({ mode: 'readwrite' });
-    if (perm === 'granted') return handle;
-    const pedido = await handle.requestPermission({ mode: 'readwrite' });
-    if (pedido === 'granted') return handle;
+  if (!forcarEscolha) {
+    let handle = await idbGet('pasta_base').catch(function () { return null; });
+    if (handle) {
+      const perm = await handle.queryPermission({ mode: 'readwrite' });
+      if (perm === 'granted') return handle;
+      const pedido = await handle.requestPermission({ mode: 'readwrite' });
+      if (pedido === 'granted') return handle;
+    }
   }
-  handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-  await idbSet('pasta_base', handle);
-  return handle;
+  const handleNovo = await window.showDirectoryPicker({ mode: 'readwrite' });
+  await idbSet('pasta_base', handleNovo);
+  return handleNovo;
+}
+
+async function limparPastaBase() {
+  await idbSet('pasta_base', null);
+}
+
+// Mostra qual pasta local esta vinculada neste navegador (so o nome --
+// o navegador nunca expoe o caminho completo), e deixa escolher outra.
+// Sem isso, nao tinha como o usuario saber se/onde estava salvando.
+function PastaLocalStatus() {
+  const [handle, setHandle] = useState(undefined); // undefined = carregando, null = nenhuma
+  const [trocando, setTrocando] = useState(false);
+  const [erro, setErro] = useState(null);
+
+  function carregar() {
+    if (!SUPORTA_PASTA_LOCAL) { setHandle(null); return; }
+    idbGet('pasta_base').then(function (h) { setHandle(h || null); }).catch(function () { setHandle(null); });
+  }
+  useEffect(carregar, []);
+
+  async function trocarPasta() {
+    setErro(null); setTrocando(true);
+    try {
+      const h = await obterPastaBase(true);
+      setHandle(h);
+    } catch (e) {
+      setErro('Escolha cancelada ou negada: ' + e.message);
+    }
+    setTrocando(false);
+  }
+
+  if (!SUPORTA_PASTA_LOCAL) {
+    return <p className="muted" style={{ fontSize: '12px' }}>Organização em pasta local: não suportada neste navegador (use Chrome/Edge no computador). Os arquivos ficam só na nuvem.</p>;
+  }
+  if (handle === undefined) return null;
+  return (
+    <p className="muted" style={{ fontSize: '12px' }}>
+      Pasta local vinculada neste navegador: {handle ? <strong>"{handle.name}"</strong> : <span>nenhuma ainda — a primeira planilha enviada vai pedir pra você escolher.</span>}
+      {' '}<button className="mini ghost" onClick={trocarPasta} disabled={trocando}>{trocando ? '...' : (handle ? 'Trocar pasta' : 'Escolher pasta agora')}</button>
+      {handle ? <span> (o navegador não mostra o caminho completo por segurança — se não lembra qual pasta é essa, clique em "Trocar pasta" e escolha de novo)</span> : null}
+      {erro ? <span style={{ color: '#ff8a8a' }}> {erro}</span> : null}
+    </p>
+  );
 }
 
 function slugPasta(texto) {
