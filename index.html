@@ -77,6 +77,7 @@
 
   .sidebar nav.secao { margin-bottom:6px; }
   .sidebar nav.secao .titulo { font-size:10px; color:var(--sidebar-texto); text-transform:uppercase; letter-spacing:.07em; margin:14px 0 6px 10px; opacity:.75; }
+  .sidebar .negociacao-nome { font-size:12px; font-weight:700; color:var(--sidebar-texto-forte); padding:0 10px; margin-bottom:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .sidebar nav.secao button {
     width:100%; text-align:left; background:none; border:0; color:var(--sidebar-texto); height:38px; padding:0 10px;
     border-radius:8px; font-size:13.5px; font-weight:500; display:flex; align-items:center; gap:10px; cursor:pointer;
@@ -134,6 +135,18 @@ function api(path, options, token) {
   });
 }
 const ROTULOS_STATUS = { negociando: 'Negociando', concluido_ganho: 'Concluído como Ganho', concluido_perdido: 'Concluído como Perdido', aceito: 'Aceito', recusado: 'Recusado', pendente: 'Pendente' };
+
+// Secoes da negociacao aberta, navegaveis pela barra lateral -- em vez de
+// empilhar tudo (parametros + itens + resumo tecnico + proposta + pivos +
+// arquivos) numa unica pagina longa, cada conceito vira sua propria tela.
+const SECOES_PROJETO = [
+  { id: 'visao-geral', rotulo: 'Visão geral', icone: 'grafico' },
+  { id: 'parametros', rotulo: 'Parâmetros comerciais', icone: 'parametros' },
+  { id: 'pivos', rotulo: 'Pivôs', icone: 'pivo' },
+  { id: 'itens', rotulo: 'Itens adicionais', icone: 'caixa' },
+  { id: 'proposta', rotulo: 'Proposta', icone: 'documento' },
+  { id: 'arquivos', rotulo: 'Arquivos', icone: 'pasta' },
+];
 function formatarStatus(status) { return ROTULOS_STATUS[status] || status; }
 
 const ROTULOS_TIPO_ITEM = { bombeamento: 'Bombeamento', pvc: 'PVC', cabos_eletricos: 'Cabos Elétricos', outro: 'Outro' };
@@ -1182,10 +1195,12 @@ function ProjetoDetalhe(props) {
 
   const p = dados.projeto;
   const r = dados.resumo;
+  const secao = props.secao || 'visao-geral';
 
   return (
     <div>
       <button className="voltar" onClick={props.onVoltar}>&larr; Voltar aos projetos</button>
+
       <div className="panel">
         <h2>{p.cliente}</h2>
         <p className="muted" style={{ marginBottom: '8px' }}>
@@ -1197,40 +1212,61 @@ function ProjetoDetalhe(props) {
         </p>
       </div>
 
-      <ParametrosComerciaisProjeto token={props.token} projeto={p} podeEditar={podeEditar} onChange={carregar} />
+      {secao === 'visao-geral' ? (
+        <React.Fragment>
+          <div className="kpis">
+            <div className="kpi"><span>Pivôs</span><strong>{r.qtde_pivos}</strong></div>
+            <div className="kpi"><span>Área total</span><strong>{numero(r.area_total_ha, 1)} ha</strong></div>
+            <div className="kpi"><span>Valor negociado</span><strong>{brl(r.valor_total)}</strong></div>
+            <div className="kpi"><span>Custo/ha</span><strong>{brl(r.custo_por_hectare_medio)}</strong></div>
+          </div>
+          <ResumoTecnico resumo={r} />
+        </React.Fragment>
+      ) : null}
 
-      <ItensAdicionaisProjeto token={props.token} projetoId={p.id} itens={dados.itens_adicionais} podeEditar={podeEditar} onChange={carregar} />
+      {secao === 'parametros' ? (
+        <ParametrosComerciaisProjeto token={props.token} projeto={p} podeEditar={podeEditar} onChange={carregar} />
+      ) : null}
 
-      <ResumoTecnico resumo={r} />
+      {secao === 'itens' ? (
+        <ItensAdicionaisProjeto token={props.token} projetoId={p.id} itens={dados.itens_adicionais} podeEditar={podeEditar} onChange={carregar} />
+      ) : null}
 
-      <ResumoComercial projeto={p} pivos={dados.pivos} itensAdicionais={dados.itens_adicionais} resumo={r} />
+      {secao === 'pivos' ? (
+        <React.Fragment>
+          <EnviarPivo token={props.token} projeto={p} onChange={carregar} />
+          <div className="panel">
+            <h2>Pivôs</h2>
+            <p className="muted" style={{ marginTop: '-6px', marginBottom: '10px' }}>
+              Valor negociado de cada pivô, já com os parâmetros comerciais da negociação (seção "Parâmetros comerciais") aplicados.
+            </p>
+            <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Nº Pivô</th><th>Composição</th><th>Área</th>
+                  <th>Valor Negociado</th><th>Custo/ha</th><th>Versão</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dados.pivos.map(function (piv) {
+                  return <LinhaPivo key={piv.id} pivo={piv} token={props.token} podeEditar={podeEditar} onChange={carregar} />;
+                })}
+                {dados.pivos.length === 0 ? <tr><td colSpan={6} className="muted">Nenhum pivô ainda. Envie a primeira planilha acima.</td></tr> : null}
+              </tbody>
+            </table>
+            </div>
+          </div>
+        </React.Fragment>
+      ) : null}
 
-      <EnviarPivo token={props.token} projeto={p} onChange={carregar} />
+      {secao === 'proposta' ? (
+        <ResumoComercial projeto={p} pivos={dados.pivos} itensAdicionais={dados.itens_adicionais} resumo={r} />
+      ) : null}
 
-      <div className="panel">
-        <h2>Pivôs</h2>
-        <p className="muted" style={{ marginTop: '-6px', marginBottom: '10px' }}>
-          Valor negociado de cada pivô, já com os parâmetros comerciais da negociação (acima) aplicados.
-        </p>
-        <div style={{ overflowX: 'auto' }}>
-        <table>
-          <thead>
-            <tr>
-              <th>Nº Pivô</th><th>Composição</th><th>Área</th>
-              <th>Valor Negociado</th><th>Custo/ha</th><th>Versão</th>
-            </tr>
-          </thead>
-          <tbody>
-            {dados.pivos.map(function (piv) {
-              return <LinhaPivo key={piv.id} pivo={piv} token={props.token} podeEditar={podeEditar} onChange={carregar} />;
-            })}
-            {dados.pivos.length === 0 ? <tr><td colSpan={6} className="muted">Nenhum pivô ainda. Envie a primeira planilha acima.</td></tr> : null}
-          </tbody>
-        </table>
-        </div>
-      </div>
-
-      <ArquivosDoProjeto projetoId={props.projetoId} token={props.token} versao={versao} />
+      {secao === 'arquivos' ? (
+        <ArquivosDoProjeto projetoId={props.projetoId} token={props.token} versao={versao} />
+      ) : null}
     </div>
   );
 }
@@ -1616,6 +1652,37 @@ function Icone(props) {
     grafico: <path d="M4 16V4M4 16h13M7 13V9m3.3 4V6m3.4 7v-2.5" />,
     sair: <path d="M8 4H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3M12 13.5 16 10l-4-3.5M16 10H7" />,
     maisPequeno: <path d="M9 3.5v11M3.5 9h11" />,
+    // Visao geral do projeto -- a mesma barra/coluna do icone "grafico", reaproveitado.
+    parametros: (
+      <React.Fragment>
+        <path d="M3 6h5M12 6h5M3 10h9M16 10h1M3 14h3M10 14h7" />
+        <circle cx="10" cy="6" r="1.5" />
+        <circle cx="14" cy="10" r="1.5" />
+        <circle cx="8" cy="14" r="1.5" />
+      </React.Fragment>
+    ),
+    // Vista aerea de um pivo central (circulo + braco) -- icone proprio do
+    // dominio em vez de um glifo generico, pra representar a secao "Pivos".
+    pivo: (
+      <React.Fragment>
+        <circle cx="10" cy="10" r="6.3" />
+        <circle cx="10" cy="10" r="2.3" />
+        <path d="M10 3.7V2.1M10 10l5.2-3" />
+      </React.Fragment>
+    ),
+    caixa: (
+      <React.Fragment>
+        <path d="M3 7.2 10 4l7 3.2v7.2L10 17l-7-2.6V7.2Z" />
+        <path d="M3 7.2 10 10l7-2.8M10 10v7" />
+      </React.Fragment>
+    ),
+    documento: (
+      <React.Fragment>
+        <path d="M6 2.5h6l3 3V17a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1Z" />
+        <path d="M12 2.5V6h3M7.3 10.2h5.4M7.3 13.2h5.4" />
+      </React.Fragment>
+    ),
+    pasta: <path d="M3 6a1 1 0 0 1 1-1h3.8l1.6 1.6H16a1 1 0 0 1 1 1V15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6Z" />,
   };
   return (
     <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -1633,10 +1700,12 @@ function App() {
   const [projetoAtual, setProjetoAtual] = useState(null);
   const [dashboardKey, setDashboardKey] = useState(0);
   const [resumoPipeline, setResumoPipeline] = useState(null);
+  const [secaoProjeto, setSecaoProjeto] = useState('visao-geral');
 
   function abrirProjeto(id) {
     setProjetoAtual(null);
     setProjetoAberto(id);
+    setSecaoProjeto('visao-geral');
   }
   function fecharProjeto() {
     setProjetoAberto(null);
@@ -1746,9 +1815,14 @@ function App() {
         {projetoAberto ? (
           <nav className="secao">
             <p className="titulo">Negociação aberta</p>
-            <button className="ativo">
-              <Icone nome="grafico" /> {projetoAtual ? projetoAtual.cliente : 'Carregando...'}
-            </button>
+            <div className="negociacao-nome">{projetoAtual ? projetoAtual.cliente : 'Carregando...'}</div>
+            {SECOES_PROJETO.map(function (s) {
+              return (
+                <button key={s.id} className={secaoProjeto === s.id ? 'ativo' : ''} onClick={function () { setSecaoProjeto(s.id); }}>
+                  <Icone nome={s.icone} /> {s.rotulo}
+                </button>
+              );
+            })}
           </nav>
         ) : null}
 
@@ -1769,6 +1843,7 @@ function App() {
               projetoId={projetoAberto}
               token={token}
               usuario={usuario}
+              secao={secaoProjeto}
               onVoltar={fecharProjeto}
               onCarregado={setProjetoAtual}
             />
