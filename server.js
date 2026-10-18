@@ -132,6 +132,28 @@ function calcularAncillaryGrossado(projeto, pisPct, icmsPct) {
   return Math.ceil(bruto / 100) * 100;
 }
 
+// Item adicional AVULSO da negociacao (bombeamento/PVC/cabos eletricos
+// vendidos separados de qualquer pivo), com seu PROPRIO desconto/encargos/
+// taxa flat/servicos adicionais -- diferente do item ao lado e diferente
+// dos parametros gerais do pivo. Usa o mesmo ramo da formula da Calculadora
+// que aplica desconto (o equivalente ao termo "K" / parte aerea), pois um
+// item vendido avulso e negociavel como qualquer outro produto.
+function calcularValorItemAdicional(item, icmsPct, pisPct) {
+  var K = Number(item.valor) || 0;
+  if (!K) return 0;
+  var E = Number(item.encargos_pct) || 0;
+  var F = Number(item.desconto_pct) || 0;
+  var G = Number(item.taxa_flat_pct) || 0;
+  var I = Number(item.servicos_adicionais) || 0;
+
+  var icmsFactor = 0.82 / ((100 - icmsPct) / 100);
+  var base = (K * icmsFactor) / ((100 - E) / 100) * ((100 - F) / 100) / ((100 - G) / 100);
+  var fatorFlat = (100 - pisPct - icmsPct - G) / 100;
+  var servico = (I && fatorFlat > 0) ? (I / fatorFlat) : 0;
+  var total = base + servico;
+  return Math.ceil(total / 100) * 100;
+}
+
 // Recalcula o valor_negociado/custo_por_hectare de TODOS os pivos de um
 // projeto usando os parametros comerciais (Encargos/Desconto/Taxa Flat) do
 // PROJETO -- nunca os do pivo individual. Chamado sempre que: (a) um pivo e
@@ -427,6 +449,79 @@ app.get('/pivos/:id/historico', auth, async (req, res) => {
   }
 });
 
+// ---------- ITENS ADICIONAIS (bombeamento/PVC/cabos eletricos avulsos) ----------
+// Cada item tem seu PROPRIO desconto/encargos/taxa flat/servicos adicionais
+// -- nao usa os parametros gerais do projeto, nem os de outro item.
+app.post('/itens-adicionais', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.projeto_id || !b.tipo) return res.status(400).json({ erro: 'Informe projeto_id e tipo' });
+    if (['bombeamento', 'pvc', 'cabos_eletricos', 'outro'].indexOf(b.tipo) === -1) return res.status(400).json({ erro: 'Tipo invalido' });
+    if (!(await possoAcessarProjeto(req.usuario, b.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
+
+    const projeto = must(await supabase.from('projetos').select('estado').eq('id', b.projeto_id).maybeSingle());
+    const { icmsPct, pisPct } = await getConstantesFiscais(projeto ? projeto.estado : null);
+
+    const item = {
+      projeto_id: b.projeto_id,
+      tipo: b.tipo,
+      descricao: b.descricao || null,
+      valor: Number(b.valor) || 0,
+      encargos_pct: b.encargos_pct != null ? Number(b.encargos_pct) : 10,
+      desconto_pct: b.desconto_pct != null ? Number(b.desconto_pct) : 0,
+      taxa_flat_pct: b.taxa_flat_pct != null ? Number(b.taxa_flat_pct) : 0,
+      servicos_adicionais: b.servicos_adicionais != null ? Number(b.servicos_adicionais) : 0,
+      created_by: req.usuario.id
+    };
+    item.valor_calculado = calcularValorItemAdicional(item, icmsPct, pisPct);
+
+    const row = must(await supabase.from('itens_adicionais').insert(item).select().single());
+    res.status(201).json(row);
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
+app.put('/itens-adicionais/:id', auth, async (req, res) => {
+  try {
+    const existente = must(await supabase.from('itens_adicionais').select('*').eq('id', req.params.id).maybeSingle());
+    if (!existente) return res.status(404).json({ erro: 'Item nao encontrado' });
+    if (!(await possoAcessarProjeto(req.usuario, existente.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
+
+    const b = req.body || {};
+    const item = {
+      descricao: b.descricao !== undefined ? b.descricao : existente.descricao,
+      valor: b.valor != null ? Number(b.valor) : existente.valor,
+      encargos_pct: b.encargos_pct != null ? Number(b.encargos_pct) : existente.encargos_pct,
+      desconto_pct: b.desconto_pct != null ? Number(b.desconto_pct) : existente.desconto_pct,
+      taxa_flat_pct: b.taxa_flat_pct != null ? Number(b.taxa_flat_pct) : existente.taxa_flat_pct,
+      servicos_adicionais: b.servicos_adicionais != null ? Number(b.servicos_adicionais) : existente.servicos_adicionais,
+      updated_at: new Date().toISOString()
+    };
+
+    const projeto = must(await supabase.from('projetos').select('estado').eq('id', existente.projeto_id).maybeSingle());
+    const { icmsPct, pisPct } = await getConstantesFiscais(projeto ? projeto.estado : null);
+    item.valor_calculado = calcularValorItemAdicional(item, icmsPct, pisPct);
+
+    const row = must(await supabase.from('itens_adicionais').update(item).eq('id', req.params.id).select().single());
+    res.json(row);
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
+app.delete('/itens-adicionais/:id', auth, async (req, res) => {
+  try {
+    const existente = must(await supabase.from('itens_adicionais').select('projeto_id').eq('id', req.params.id).maybeSingle());
+    if (!existente) return res.status(404).json({ erro: 'Item nao encontrado' });
+    if (!(await possoAcessarProjeto(req.usuario, existente.projeto_id))) return res.status(403).json({ erro: 'Sem permissao sobre este projeto' });
+    await supabase.from('itens_adicionais').delete().eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ erro: String((e && e.message) || e) });
+  }
+});
+
 // Edita os parametros comerciais da NEGOCIACAO (Encargos/Desconto/Taxa
 // Flat/Montagem/Servicos Adicionais) -- um valor so para o projeto inteiro,
 // nunca por pivo/equipamento -- e recalcula o Valor Negociado de TODOS os
@@ -537,7 +632,7 @@ app.post('/projetos', auth, exigirNivel('vendedor', 'gerente', 'diretor'), async
       municipio: b.municipio || null,
       fazenda: b.fazenda || null,
       descricao: b.descricao || '',
-      status: 'em_negociacao',
+      status: 'negociando',
       vendedor_id: req.usuario.id,
       caminho_local_calculadora: b.caminho_local_calculadora || null,
       encargos_pct: b.encargos_pct != null ? Number(b.encargos_pct) : 10,
@@ -569,10 +664,41 @@ app.put('/projetos/:id', auth, async (req, res) => {
       fazenda: b.fazenda !== undefined ? b.fazenda : p.fazenda,
       descricao: b.descricao !== undefined ? b.descricao : p.descricao,
       status: b.status !== undefined ? b.status : p.status,
+      motivo_perda_categoria: b.motivo_perda_categoria !== undefined ? b.motivo_perda_categoria : p.motivo_perda_categoria,
+      motivo_perda_concorrente: b.motivo_perda_concorrente !== undefined ? b.motivo_perda_concorrente : p.motivo_perda_concorrente,
+      motivo_perda_detalhe: b.motivo_perda_detalhe !== undefined ? b.motivo_perda_detalhe : p.motivo_perda_detalhe,
       caminho_local_calculadora: b.caminho_local_calculadora !== undefined ? b.caminho_local_calculadora : p.caminho_local_calculadora,
       updated_at: new Date().toISOString()
     };
-    if (['em_negociacao', 'aprovado', 'reprovado'].indexOf(novo.status) === -1) return res.status(400).json({ erro: 'Status invalido' });
+    if (['negociando', 'concluido_ganho', 'concluido_perdido'].indexOf(novo.status) === -1) {
+      return res.status(400).json({ erro: 'Status invalido' });
+    }
+
+    if (novo.status === 'concluido_perdido') {
+      const categorias = ['valor', 'concorrencia', 'prazo_entrega', 'relacionamento', 'cancelado_cliente', 'outro'];
+      if (categorias.indexOf(novo.motivo_perda_categoria) === -1) {
+        return res.status(400).json({ erro: 'Informe o motivo da perda' });
+      }
+      if (novo.motivo_perda_categoria === 'concorrencia' && ['Valley', 'Bauer', 'Krebsfer', 'Focking'].indexOf(novo.motivo_perda_concorrente) === -1) {
+        return res.status(400).json({ erro: 'Informe qual concorrente' });
+      }
+      if (novo.motivo_perda_categoria !== 'concorrencia') novo.motivo_perda_concorrente = null;
+      if (novo.motivo_perda_categoria === 'outro' && !String(novo.motivo_perda_detalhe || '').trim()) {
+        return res.status(400).json({ erro: 'Descreva o motivo' });
+      }
+      novo.concluido_em = p.concluido_em || new Date().toISOString();
+    } else if (novo.status === 'concluido_ganho') {
+      novo.motivo_perda_categoria = null;
+      novo.motivo_perda_concorrente = null;
+      novo.motivo_perda_detalhe = null;
+      novo.concluido_em = p.concluido_em || new Date().toISOString();
+    } else {
+      novo.motivo_perda_categoria = null;
+      novo.motivo_perda_concorrente = null;
+      novo.motivo_perda_detalhe = null;
+      novo.concluido_em = null;
+    }
+
     const row = must(await supabase.from('projetos').update(novo).eq('id', p.id).select().single());
     res.json(row);
   } catch (e) {
@@ -591,7 +717,9 @@ app.get('/projetos/:id/resumo', auth, async (req, res) => {
     const valorPivos = pivos.reduce(function (s, r) { return s + (Number(r.valor_negociado) || 0); }, 0);
     const { icmsPct, pisPct } = await getConstantesFiscais(p.estado);
     const montagemServicosTotal = calcularAncillaryGrossado(p, pisPct, icmsPct);
-    const valorTotal = valorPivos + montagemServicosTotal;
+    const itensAdicionais = must(await supabase.from('itens_adicionais').select('*').eq('projeto_id', p.id).order('created_at'));
+    const itensAdicionaisTotal = itensAdicionais.reduce(function (s, r) { return s + (Number(r.valor_calculado) || 0); }, 0);
+    const valorTotal = valorPivos + montagemServicosTotal + itensAdicionaisTotal;
     const areaTotal = pivos.reduce(function (s, r) { return s + (Number(r.area_irrigada_ha) || 0); }, 0);
     const vendedor = p.vendedor_id ? must(await supabase.from('usuarios').select('nome,email').eq('id', p.vendedor_id).maybeSingle()) : null;
 
@@ -623,11 +751,13 @@ app.get('/projetos/:id/resumo', auth, async (req, res) => {
     res.json({
       projeto: Object.assign({}, p, { vendedor_nome: vendedor ? vendedor.nome : null, vendedor_email: vendedor ? vendedor.email : null }),
       pivos: pivos,
+      itens_adicionais: itensAdicionais,
       resumo: {
         qtde_pivos: pivos.length,
         valor_total: valorTotal,
         valor_pivos: valorPivos,
         montagem_servicos_total: montagemServicosTotal,
+        itens_adicionais_total: itensAdicionaisTotal,
         area_total_ha: areaTotal,
         area_media_por_pivo_ha: pivos.length ? areaTotal / pivos.length : 0,
         custo_por_hectare_medio: areaTotal ? valorTotal / areaTotal : 0,
@@ -720,45 +850,6 @@ app.get('/arquivos', auth, async (req, res) => {
 });
 
 // ---------- APROVACOES ----------
-app.post('/aprovacoes', auth, exigirNivel('gerente', 'diretor'), async (req, res) => {
-  try {
-    const b = req.body || {};
-    if (!b.projeto_id || ['aprovado', 'reprovado'].indexOf(b.decisao) === -1) {
-      return res.status(400).json({ erro: 'Informe projeto_id e decisao (aprovado|reprovado)' });
-    }
-    const p = must(await supabase.from('projetos').select('*').eq('id', b.projeto_id).maybeSingle());
-    if (!p) return res.status(404).json({ erro: 'Projeto nao encontrado' });
-    if (req.usuario.nivel === 'gerente' && (await idsDaEquipe(req.usuario.id)).indexOf(p.vendedor_id) === -1) {
-      return res.status(403).json({ erro: 'Projeto fora da sua equipe' });
-    }
-    const row = must(await supabase.from('aprovacoes').insert({
-      projeto_id: b.projeto_id,
-      aprovador_id: req.usuario.id,
-      decisao: b.decisao,
-      comentario: b.comentario || ''
-    }).select().single());
-    await supabase.from('projetos').update({ status: b.decisao, updated_at: new Date().toISOString() }).eq('id', b.projeto_id);
-    res.status(201).json(row);
-  } catch (e) {
-    res.status(500).json({ erro: String((e && e.message) || e) });
-  }
-});
-
-app.get('/aprovacoes', auth, async (req, res) => {
-  try {
-    const rows = must(await supabase.from('aprovacoes').select('*').order('created_at', { ascending: false }));
-    const ids = Array.from(new Set(rows.map(function (r) { return r.aprovador_id; }).filter(Boolean)));
-    let nomeMap = {};
-    if (ids.length) {
-      const usuarios = must(await supabase.from('usuarios').select('id,nome').in('id', ids));
-      usuarios.forEach(function (u) { nomeMap[u.id] = u.nome; });
-    }
-    res.json(rows.map(function (r) { return Object.assign({}, r, { aprovador_nome: nomeMap[r.aprovador_id] || null }); }));
-  } catch (e) {
-    res.status(500).json({ erro: String((e && e.message) || e) });
-  }
-});
-
 // ---------- DASHBOARD ----------
 app.get('/dashboard', auth, async (req, res) => {
   try {
@@ -773,16 +864,14 @@ app.get('/dashboard', auth, async (req, res) => {
     }
     const projetoIds = projetos.map(function (p) { return p.id; });
     const pivos = projetoIds.length ? must(await supabase.from('pivos').select('projeto_id,valor_negociado,area_irrigada_ha').in('projeto_id', projetoIds)) : [];
-
-    const valorPorProjeto = {};
-    pivos.forEach(function (piv) {
-      valorPorProjeto[piv.projeto_id] = (valorPorProjeto[piv.projeto_id] || 0) + (Number(piv.valor_negociado) || 0);
-    });
+    const itensAdicionais = projetoIds.length ? must(await supabase.from('itens_adicionais').select('projeto_id,valor_calculado').in('projeto_id', projetoIds)) : [];
 
     const total = projetos.length;
-    const emNegociacao = projetos.filter(function (p) { return p.status === 'em_negociacao'; }).length;
-    const aprovados = projetos.filter(function (p) { return p.status === 'aprovado'; }).length;
+    const negociando = projetos.filter(function (p) { return p.status === 'negociando'; }).length;
+    const concluidosGanho = projetos.filter(function (p) { return p.status === 'concluido_ganho'; }).length;
+    const concluidosPerdido = projetos.filter(function (p) { return p.status === 'concluido_perdido'; }).length;
     const valorPivos = pivos.reduce(function (s, r) { return s + (Number(r.valor_negociado) || 0); }, 0);
+    const valorItensAdicionais = itensAdicionais.reduce(function (s, r) { return s + (Number(r.valor_calculado) || 0); }, 0);
     // Montagem/Servicos Adicionais sao um total unico POR PROJETO -- soma o
     // ancillary de cada projeto (cada um com seu proprio ICMS por estado).
     let ancillaryTotal = 0;
@@ -790,14 +879,15 @@ app.get('/dashboard', auth, async (req, res) => {
       const { icmsPct, pisPct } = await getConstantesFiscais(proj.estado);
       ancillaryTotal += calcularAncillaryGrossado(proj, pisPct, icmsPct);
     }
-    const valorTotal = valorPivos + ancillaryTotal;
+    const valorTotal = valorPivos + ancillaryTotal + valorItensAdicionais;
     const areaTotal = pivos.reduce(function (s, r) { return s + (Number(r.area_irrigada_ha) || 0); }, 0);
 
     res.json({
       kpis: {
         total: total,
-        em_negociacao: emNegociacao,
-        aprovados: aprovados,
+        negociando: negociando,
+        concluidos_ganho: concluidosGanho,
+        concluidos_perdido: concluidosPerdido,
         qtde_pivos: pivos.length,
         valor_total: valorTotal,
         area_total_ha: areaTotal,

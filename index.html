@@ -37,9 +37,9 @@
   tr.clicavel { cursor:pointer; }
   tr.clicavel:hover { background:#f6f6f6; }
   .tag { font-size:11px; padding:3px 8px; border-radius:999px; font-weight:600; }
-  .tag.em_negociacao { background:#fff5e0; color:#8c520a; }
-  .tag.aprovado, .tag.aceito { background:#ecfdf5; color:#065f46; }
-  .tag.reprovado, .tag.recusado { background:#fff1f2; color:#9f1239; }
+  .tag.negociando { background:#fff5e0; color:#8c520a; }
+  .tag.concluido_ganho, .tag.aceito { background:#ecfdf5; color:#065f46; }
+  .tag.concluido_perdido, .tag.recusado { background:#fff1f2; color:#9f1239; }
   .tag.pendente { background:#ececed; color:#32323a; }
   .panel { background:#fff; border:1px solid var(--borda); border-radius:12px; padding:16px; margin-bottom:18px; }
   .panel h2 { margin:0 0 12px; font-size:15px; }
@@ -100,8 +100,16 @@ function api(path, options, token) {
     });
   });
 }
-const ROTULOS_STATUS = { em_negociacao: 'Em negociação', aprovado: 'Aprovado', reprovado: 'Reprovado', aceito: 'Aceito', recusado: 'Recusado', pendente: 'Pendente' };
+const ROTULOS_STATUS = { negociando: 'Negociando', concluido_ganho: 'Concluído como Ganho', concluido_perdido: 'Concluído como Perdido', aceito: 'Aceito', recusado: 'Recusado', pendente: 'Pendente' };
 function formatarStatus(status) { return ROTULOS_STATUS[status] || status; }
+
+const ROTULOS_TIPO_ITEM = { bombeamento: 'Bombeamento', pvc: 'PVC', cabos_eletricos: 'Cabos Elétricos', outro: 'Outro' };
+const ROTULOS_MOTIVO_PERDA = {
+  valor: 'Valor', concorrencia: 'Concorrência', prazo_entrega: 'Prazo de entrega',
+  relacionamento: 'Relacionamento/confiança', cancelado_cliente: 'Projeto cancelado pelo cliente', outro: 'Outro'
+};
+const CONCORRENTES = ['Valley', 'Bauer', 'Krebsfer', 'Focking'];
+const ROTULOS_CONFIG_GLOBAL = { desconto_revenda_pct: 'Desconto de revenda', pis_pct: 'PIS' };
 function iniciais(nome) {
   const partes = String(nome || '').trim().split(/\s+/).filter(Boolean);
   const a = partes[0] ? partes[0][0] : '';
@@ -694,6 +702,7 @@ function ResumoTecnico(props) {
 function ResumoComercial(props) {
   const p = props.projeto;
   const pivos = props.pivos;
+  const itensAdicionais = props.itensAdicionais || [];
   const total = props.resumo;
 
   return (
@@ -734,6 +743,14 @@ function ResumoComercial(props) {
               );
             })}
             {pivos.length === 0 ? <tr><td colSpan={4} className="muted">Nenhum pivô ainda.</td></tr> : null}
+            {itensAdicionais.map(function (item) {
+              return (
+                <tr key={item.id}>
+                  <td colSpan={3} className="muted">{ROTULOS_TIPO_ITEM[item.tipo] || item.tipo}{item.descricao ? ' — ' + item.descricao : ''}</td>
+                  <td>{brl(item.valor_calculado)}</td>
+                </tr>
+              );
+            })}
             {total.montagem_servicos_total ? (
               <tr>
                 <td colSpan={3} className="muted">Montagem e serviços adicionais</td>
@@ -755,6 +772,250 @@ function ResumoComercial(props) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+// Status da negociacao: Negociando -> Concluido como Ganho / Concluido como
+// Perdido. Motivo e obrigatorio so quando perde (Valor, Concorrencia -- com
+// qual marca --, Prazo de entrega, Relacionamento/confianca, Projeto
+// cancelado pelo cliente, Outro com texto livre).
+function StatusProjeto(props) {
+  const p = props.projeto;
+  const [editando, setEditando] = useState(false);
+  const [statusEscolhido, setStatusEscolhido] = useState(null);
+  const [categoria, setCategoria] = useState(p.motivo_perda_categoria || '');
+  const [concorrente, setConcorrente] = useState(p.motivo_perda_concorrente || '');
+  const [detalhe, setDetalhe] = useState(p.motivo_perda_detalhe || '');
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+
+  function iniciarMudanca(novoStatus) {
+    setErro(null);
+    if (novoStatus === 'concluido_perdido') {
+      setStatusEscolhido(novoStatus);
+      setEditando(true);
+    } else {
+      salvar(novoStatus, {});
+    }
+  }
+
+  function salvar(novoStatus, motivo) {
+    setSalvando(true);
+    setErro(null);
+    api('/projetos/' + p.id, { method: 'PUT', body: JSON.stringify(Object.assign({ status: novoStatus }, motivo)) }, props.token)
+      .then(function () { setEditando(false); props.onChange(); })
+      .catch(function (e) { setErro(e.message); })
+      .then(function () { setSalvando(false); });
+  }
+
+  function confirmarPerdido() {
+    if (!categoria) { setErro('Escolha o motivo da perda.'); return; }
+    if (categoria === 'concorrencia' && !concorrente) { setErro('Escolha qual concorrente.'); return; }
+    if (categoria === 'outro' && !detalhe.trim()) { setErro('Descreva o motivo.'); return; }
+    salvar('concluido_perdido', {
+      motivo_perda_categoria: categoria,
+      motivo_perda_concorrente: categoria === 'concorrencia' ? concorrente : null,
+      motivo_perda_detalhe: detalhe || null
+    });
+  }
+
+  if (!props.podeEditar) {
+    return <span className={'tag ' + p.status}>{formatarStatus(p.status)}</span>;
+  }
+
+  if (p.status !== 'negociando' && !editando) {
+    // Ja concluido -- mostra o status + motivo (se perdido) + opcao de reabrir.
+    return (
+      <div className="row" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+        <span className={'tag ' + p.status}>{formatarStatus(p.status)}</span>
+        {p.status === 'concluido_perdido' && p.motivo_perda_categoria ? (
+          <span className="muted" style={{ fontSize: '12px' }}>
+            Motivo: {ROTULOS_MOTIVO_PERDA[p.motivo_perda_categoria] || p.motivo_perda_categoria}
+            {p.motivo_perda_concorrente ? ' — ' + p.motivo_perda_concorrente : ''}
+            {p.motivo_perda_detalhe ? ' — ' + p.motivo_perda_detalhe : ''}
+          </span>
+        ) : null}
+        <button className="mini ghost" disabled={salvando} onClick={function () { salvar('negociando', {}); }}>Reabrir negociação</button>
+      </div>
+    );
+  }
+
+  if (editando) {
+    return (
+      <div className="panel" style={{ background: '#fff1f2', borderColor: '#f3c6cd' }}>
+        <p style={{ margin: '0 0 8px', fontWeight: 600 }}>Marcar como Concluído como Perdido -- qual o motivo?</p>
+        <div className="grid-campos">
+          <div>
+            <label>Motivo</label>
+            <select value={categoria} onChange={function (e) { setCategoria(e.target.value); }}>
+              <option value="">Selecione...</option>
+              {Object.keys(ROTULOS_MOTIVO_PERDA).map(function (k) { return <option key={k} value={k}>{ROTULOS_MOTIVO_PERDA[k]}</option>; })}
+            </select>
+          </div>
+          {categoria === 'concorrencia' ? (
+            <div>
+              <label>Concorrente</label>
+              <select value={concorrente} onChange={function (e) { setConcorrente(e.target.value); }}>
+                <option value="">Selecione...</option>
+                {CONCORRENTES.map(function (c) { return <option key={c} value={c}>{c}</option>; })}
+              </select>
+            </div>
+          ) : null}
+        </div>
+        <div style={{ marginTop: '8px' }}>
+          <label>{categoria === 'outro' ? 'Descreva o motivo' : 'Observação (opcional)'}</label>
+          <input type="text" style={{ width: '100%' }} value={detalhe} onChange={function (e) { setDetalhe(e.target.value); }} />
+        </div>
+        {erro ? <div className="err" style={{ marginTop: '8px' }}>{erro}</div> : null}
+        <div className="row" style={{ marginTop: '10px' }}>
+          <button onClick={confirmarPerdido} disabled={salvando}>{salvando ? 'Salvando...' : 'Confirmar perda'}</button>
+          <button className="ghost" onClick={function () { setEditando(false); setErro(null); }} disabled={salvando}>Cancelar</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="row" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+      <span className={'tag ' + p.status}>{formatarStatus(p.status)}</span>
+      <button className="mini ghost" disabled={salvando} onClick={function () { iniciarMudanca('concluido_ganho'); }}>Marcar Ganho</button>
+      <button className="mini ghost" disabled={salvando} onClick={function () { iniciarMudanca('concluido_perdido'); }}>Marcar Perdido</button>
+      {erro ? <span className="err" style={{ fontSize: '11px' }}>{erro}</span> : null}
+    </div>
+  );
+}
+
+// Itens adicionais da NEGOCIACAO que ficam FORA de qualquer pivo --
+// bombeamento/PVC/cabos eletricos vendidos avulsos, cada um com seu PROPRIO
+// desconto/encargos/taxa flat/servicos adicionais (diferente entre si e
+// diferente dos parametros gerais do pivo, acima). So existe quando esse
+// item NAO esta embutido no preco de nenhum pivo (.xlsb) do projeto.
+function ItensAdicionaisProjeto(props) {
+  const itens = props.itens || [];
+  const [mostrarForm, setMostrarForm] = useState(false);
+  const [novoTipo, setNovoTipo] = useState('bombeamento');
+  const [novoValor, setNovoValor] = useState('');
+  const [erro, setErro] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+
+  function adicionar() {
+    const valor = parseFloat(String(novoValor).replace(/\./g, '').replace(',', '.'));
+    if (!valor || valor <= 0) { setErro('Informe um valor.'); return; }
+    setSalvando(true);
+    setErro(null);
+    api('/itens-adicionais', {
+      method: 'POST',
+      body: JSON.stringify({ projeto_id: props.projetoId, tipo: novoTipo, valor: valor })
+    }, props.token)
+      .then(function () { setMostrarForm(false); setNovoValor(''); props.onChange(); })
+      .catch(function (e) { setErro(e.message); })
+      .then(function () { setSalvando(false); });
+  }
+
+  function excluir(id) {
+    api('/itens-adicionais/' + id, { method: 'DELETE' }, props.token)
+      .then(function () { props.onChange(); })
+      .catch(function (e) { alert('Erro ao excluir: ' + e.message); });
+  }
+
+  return (
+    <div className="panel">
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <h2 style={{ margin: 0 }}>Itens adicionais (avulsos)</h2>
+        {props.podeEditar ? <button className="mini ghost" onClick={function () { setMostrarForm(!mostrarForm); }}>{mostrarForm ? 'Cancelar' : '+ Adicionar item'}</button> : null}
+      </div>
+      <p className="muted" style={{ marginTop: '4px', marginBottom: '12px' }}>
+        Bombeamento, PVC ou cabos elétricos vendidos separados de qualquer pivô — cada item tem seu próprio desconto/encargos/taxa flat, diferentes entre si e dos parâmetros do pivô acima.
+      </p>
+
+      {mostrarForm ? (
+        <div className="grid-campos" style={{ marginBottom: '12px' }}>
+          <div>
+            <label>Tipo</label>
+            <select value={novoTipo} onChange={function (e) { setNovoTipo(e.target.value); }}>
+              {Object.keys(ROTULOS_TIPO_ITEM).map(function (k) { return <option key={k} value={k}>{ROTULOS_TIPO_ITEM[k]}</option>; })}
+            </select>
+          </div>
+          <div>
+            <label>Valor base (R$)</label>
+            <input className="campo-mini campo-monetario" type="text" inputMode="decimal" value={novoValor} onChange={function (e) { setNovoValor(e.target.value); }} placeholder="0,00" />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+            <button onClick={adicionar} disabled={salvando}>{salvando ? 'Adicionando...' : 'Adicionar'}</button>
+          </div>
+        </div>
+      ) : null}
+      {erro ? <div className="err" style={{ marginBottom: '8px' }}>{erro}</div> : null}
+
+      {itens.length === 0 ? (
+        <p className="muted">Nenhum item avulso -- use "+ Adicionar item" se o projeto tiver bombeamento, PVC ou cabos elétricos vendidos separados de algum pivô.</p>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+        <table>
+          <thead>
+            <tr><th>Tipo</th><th>Valor base</th><th>Encargos</th><th>Desconto</th><th>Taxa Flat</th><th>Serv. Adicionais</th><th>Valor Calculado</th><th></th></tr>
+          </thead>
+          <tbody>
+            {itens.map(function (item) {
+              return <LinhaItemAdicional key={item.id} item={item} token={props.token} podeEditar={props.podeEditar} onChange={props.onChange} onExcluir={excluir} />;
+            })}
+          </tbody>
+        </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LinhaItemAdicional(props) {
+  const item = props.item;
+  const valoresDoItem = function (it) {
+    return { valor: it.valor, encargos_pct: it.encargos_pct, desconto_pct: it.desconto_pct, taxa_flat_pct: it.taxa_flat_pct, servicos_adicionais: it.servicos_adicionais };
+  };
+  const [campos, setCampos] = useState(valoresDoItem(item));
+  const [salvando, setSalvando] = useState(false);
+  const salvoRef = React.useRef(valoresDoItem(item));
+
+  useEffect(function () {
+    const v = valoresDoItem(item);
+    setCampos(v);
+    salvoRef.current = v;
+  }, [item.valor, item.encargos_pct, item.desconto_pct, item.taxa_flat_pct, item.servicos_adicionais]);
+
+  function salvarCampos(novosCampos) {
+    const mudou = Object.keys(novosCampos).some(function (k) { return Number(novosCampos[k]) !== Number(salvoRef.current[k]); });
+    setCampos(novosCampos);
+    if (!mudou) return;
+    setSalvando(true);
+    api('/itens-adicionais/' + item.id, { method: 'PUT', body: JSON.stringify(novosCampos) }, props.token)
+      .then(function () { salvoRef.current = novosCampos; props.onChange(); })
+      .catch(function (e) { alert('Erro ao salvar: ' + e.message); })
+      .then(function () { setSalvando(false); });
+  }
+
+  const soLeitura = !props.podeEditar;
+  const campo = function (nome, Componente) {
+    return (
+      <td>
+        <Componente
+          value={campos[nome]} disabled={soLeitura}
+          onCommit={function (n) { salvarCampos(Object.assign({}, campos, { [nome]: n })); }}
+        />
+      </td>
+    );
+  };
+
+  return (
+    <tr>
+      <td>{ROTULOS_TIPO_ITEM[item.tipo] || item.tipo}{item.descricao ? <div className="muted" style={{ fontSize: '11px' }}>{item.descricao}</div> : null}</td>
+      {campo('valor', CampoMonetario)}
+      {campo('encargos_pct', CampoPercentual)}
+      {campo('desconto_pct', CampoPercentual)}
+      {campo('taxa_flat_pct', CampoPercentual)}
+      {campo('servicos_adicionais', CampoMonetario)}
+      <td><strong>{brl(item.valor_calculado)}</strong>{salvando ? <div className="muted" style={{ fontSize: '10px' }}>salvando…</div> : null}</td>
+      <td>{props.podeEditar ? <button className="mini ghost" onClick={function () { props.onExcluir(item.id); }}>🗑️</button> : null}</td>
+    </tr>
   );
 }
 
@@ -854,20 +1115,22 @@ function ProjetoDetalhe(props) {
       <button className="voltar" onClick={props.onVoltar}>&larr; Voltar aos projetos</button>
       <div className="panel">
         <h2>{p.cliente}</h2>
-        <p className="muted" style={{ marginBottom: '4px' }}>
+        <p className="muted" style={{ marginBottom: '8px' }}>
           {p.fazenda ? p.fazenda + ' — ' : ''}{p.municipio ? p.municipio + '/' : ''}{p.estado || ''}
-          &nbsp;&middot;&nbsp;<span className={'tag ' + p.status}>{formatarStatus(p.status)}</span>
         </p>
-        <p className="muted" style={{ margin: 0 }}>
+        <StatusProjeto token={props.token} projeto={p} podeEditar={podeEditar} onChange={carregar} />
+        <p className="muted" style={{ margin: '8px 0 0' }}>
           {r.qtde_pivos} pivô{r.qtde_pivos === 1 ? '' : 's'} &middot; {numero(r.area_total_ha, 1)} ha &middot; {brl(r.valor_total)} negociado &middot; {brl(r.custo_por_hectare_medio)}/ha
         </p>
       </div>
 
       <ParametrosComerciaisProjeto token={props.token} projeto={p} podeEditar={podeEditar} onChange={carregar} />
 
+      <ItensAdicionaisProjeto token={props.token} projetoId={p.id} itens={dados.itens_adicionais} podeEditar={podeEditar} onChange={carregar} />
+
       <ResumoTecnico resumo={r} />
 
-      <ResumoComercial projeto={p} pivos={dados.pivos} resumo={r} />
+      <ResumoComercial projeto={p} pivos={dados.pivos} itensAdicionais={dados.itens_adicionais} resumo={r} />
 
       <EnviarPivo token={props.token} projeto={p} onChange={carregar} />
 
@@ -1045,8 +1308,9 @@ function Dashboard(props) {
       <h2 style={{ margin: '0 0 12px' }}>Dashboard geral &middot; <span className="muted" style={{ fontWeight: 400, fontSize: '13px' }}>todas as negociações no seu escopo</span></h2>
       <div className="kpis">
         <div className="kpi"><span>Total de projetos</span><strong>{kpis ? kpis.total : '-'}</strong></div>
-        <div className="kpi"><span>Em negociação</span><strong>{kpis ? kpis.em_negociacao : '-'}</strong></div>
-        <div className="kpi"><span>Aprovados</span><strong>{kpis ? kpis.aprovados : '-'}</strong></div>
+        <div className="kpi"><span>Negociando</span><strong>{kpis ? kpis.negociando : '-'}</strong></div>
+        <div className="kpi"><span>Ganhos</span><strong>{kpis ? kpis.concluidos_ganho : '-'}</strong></div>
+        <div className="kpi"><span>Perdidos</span><strong>{kpis ? kpis.concluidos_perdido : '-'}</strong></div>
         <div className="kpi"><span>Pivôs</span><strong>{kpis ? kpis.qtde_pivos : '-'}</strong></div>
         <div className="kpi"><span>Área total</span><strong>{kpis ? numero(kpis.area_total_ha, 1) + ' ha' : '-'}</strong></div>
         <div className="kpi"><span>Valor total</span><strong>{kpis ? brl(kpis.valor_total) : '-'}</strong></div>
@@ -1205,16 +1469,19 @@ function AdminConfigFiscal(props) {
   return (
     <div>
       <div className="panel">
-        <h2>Constantes globais (fórmula de desconto)</h2>
+        <h2>Constantes da fórmula de precificação</h2>
+        <p className="muted" style={{ marginTop: '-6px', marginBottom: '10px' }}>
+          Usadas no cálculo do Valor Negociado de todo pivô, junto com o ICMS do estado (abaixo). Mude só se a alíquota ou a política de revenda mudar de verdade.
+        </p>
         {erro ? <div className="err">{erro}</div> : null}
         {msg ? <div className="ok">{msg}</div> : null}
         <table>
-          <thead><tr><th>Chave</th><th>Descrição</th><th>Valor</th></tr></thead>
+          <thead><tr><th>Parâmetro</th><th>Descrição</th><th>Valor</th></tr></thead>
           <tbody>
             {globais.map(function (g) {
               return (
                 <tr key={g.chave}>
-                  <td>{g.chave}</td>
+                  <td>{ROTULOS_CONFIG_GLOBAL[g.chave] || g.chave}</td>
                   <td className="muted">{g.descricao}</td>
                   <td>
                     <div className="row">
@@ -1229,7 +1496,10 @@ function AdminConfigFiscal(props) {
         </table>
       </div>
       <div className="panel">
-        <h2>Tabela de desconto (ICMS por estado)</h2>
+        <h2>Alíquota de ICMS por estado</h2>
+        <p className="muted" style={{ marginTop: '-6px', marginBottom: '10px' }}>
+          Entra na mesma fórmula do Valor Negociado -- cada estado tem a sua.
+        </p>
         <table>
           <thead><tr><th>Estado</th><th>ICMS %</th></tr></thead>
           <tbody>

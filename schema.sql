@@ -4,6 +4,7 @@
 create extension if not exists pgcrypto;
 
 drop table if exists log_desconto cascade;
+drop table if exists itens_adicionais cascade;
 drop table if exists pivos cascade;
 drop table if exists aprovacoes cascade;
 drop table if exists arquivos cascade;
@@ -34,7 +35,12 @@ create table projetos (
   municipio text,
   fazenda text,
   descricao text,
-  status text default 'em_negociacao' check (status in ('em_negociacao','aprovado','reprovado')),
+  status text default 'negociando' check (status in ('negociando','concluido_ganho','concluido_perdido')),
+  -- Motivo (obrigatorio so quando status = concluido_perdido)
+  motivo_perda_categoria text check (motivo_perda_categoria in ('valor','concorrencia','prazo_entrega','relacionamento','cancelado_cliente','outro')),
+  motivo_perda_concorrente text check (motivo_perda_concorrente in ('Valley','Bauer','Krebsfer','Focking')), -- so quando motivo_perda_categoria = 'concorrencia'
+  motivo_perda_detalhe text, -- texto livre (obrigatorio quando categoria = 'outro', opcional nos demais)
+  concluido_em timestamptz,
   vendedor_id uuid references usuarios(id),
   gerente_id uuid references usuarios(id),
   caminho_local_calculadora text, -- caminho da planilha "Calculadora" (.xlsm) deste cliente, na pasta local do usuario
@@ -123,6 +129,29 @@ create table config_global (
 );
 
 -- Arquivo enviado por um vendedor para um destinatario (gerente/diretor) aprovar.
+-- Itens adicionais da NEGOCIACAO que ficam FORA de qualquer pivo (.xlsb) --
+-- ex: um bombeamento, PVC ou cabos eletricos vendidos avulsos, cada um com
+-- seu proprio desconto/margem/servicos adicionais (diferentes entre si e
+-- diferentes dos parametros comerciais gerais do pivo, em `projetos`).
+-- Quando o bombeamento/PVC/cabos ja vem embutido no preco do proprio pivo
+-- (dentro do .xlsb), NAO cria um item aqui -- isso so existe quando o
+-- vendedor precisa vender/descontar essa parte separado.
+create table itens_adicionais (
+  id uuid primary key default gen_random_uuid(),
+  projeto_id uuid references projetos(id) on delete cascade,
+  tipo text not null check (tipo in ('bombeamento','pvc','cabos_eletricos','outro')),
+  descricao text,
+  valor numeric not null default 0,         -- valor base (R$) antes de desconto/encargos
+  encargos_pct numeric default 10,
+  desconto_pct numeric default 0,
+  taxa_flat_pct numeric default 0,
+  servicos_adicionais numeric default 0,    -- R$, so deste item
+  valor_calculado numeric,                  -- resultado ja com desconto/encargos/flat aplicados
+  created_by uuid references usuarios(id),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
 -- O destinatario "aceita" (status vira aceito) e, nesse momento, o navegador
 -- do destinatario organiza uma copia local do arquivo na mesma estrutura de
 -- pastas (Cliente/Estado/Municipio/Fazenda/versoes) usada pelo vendedor.
@@ -189,6 +218,7 @@ alter table arquivos disable row level security;
 alter table aprovacoes disable row level security;
 alter table pivos_historico disable row level security;
 alter table log_desconto disable row level security;
+alter table itens_adicionais disable row level security;
 
 -- Dados fiscais extraidos da aba "Dados" da Calculadora real (validos para todas as planilhas)
 INSERT INTO config_fiscal (estado, icms_pct) VALUES
