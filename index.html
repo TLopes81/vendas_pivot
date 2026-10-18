@@ -98,6 +98,8 @@ function api(path, options, token) {
     });
   });
 }
+const ROTULOS_STATUS = { em_negociacao: 'Em negociação', aprovado: 'Aprovado', reprovado: 'Reprovado', aceito: 'Aceito', recusado: 'Recusado', pendente: 'Pendente' };
+function formatarStatus(status) { return ROTULOS_STATUS[status] || status; }
 function iniciais(nome) {
   const partes = String(nome || '').trim().split(/\s+/).filter(Boolean);
   const a = partes[0] ? partes[0][0] : '';
@@ -701,7 +703,9 @@ function ProjetoDetalhe(props) {
   const [versao, setVersao] = useState(0);
 
   const carregar = useCallback(function () {
-    api('/projetos/' + props.projetoId + '/resumo', {}, props.token).then(setDados).catch(function (e) { setErro(e.message); });
+    api('/projetos/' + props.projetoId + '/resumo', {}, props.token)
+      .then(function (d) { setDados(d); if (props.onCarregado) props.onCarregado(d.projeto); })
+      .catch(function (e) { setErro(e.message); });
     setVersao(function (v) { return v + 1; });
   }, [props.projetoId, props.token]);
 
@@ -720,16 +724,13 @@ function ProjetoDetalhe(props) {
       <button className="voltar" onClick={props.onVoltar}>&larr; Voltar aos projetos</button>
       <div className="panel">
         <h2>{p.cliente}</h2>
-        <p className="muted">
+        <p className="muted" style={{ marginBottom: '4px' }}>
           {p.fazenda ? p.fazenda + ' — ' : ''}{p.municipio ? p.municipio + '/' : ''}{p.estado || ''}
-          &nbsp;&middot;&nbsp;<span className={'tag ' + p.status}>{p.status}</span>
+          &nbsp;&middot;&nbsp;<span className={'tag ' + p.status}>{formatarStatus(p.status)}</span>
         </p>
-        <div className="kpis">
-          <div className="kpi"><span>Pivôs</span><strong>{r.qtde_pivos}</strong></div>
-          <div className="kpi"><span>Área total</span><strong>{numero(r.area_total_ha, 1)} ha</strong></div>
-          <div className="kpi"><span>Valor total negociado</span><strong>{brl(r.valor_total)}</strong></div>
-          <div className="kpi"><span>Custo médio/ha</span><strong>{brl(r.custo_por_hectare_medio)}</strong></div>
-        </div>
+        <p className="muted" style={{ margin: 0 }}>
+          {r.qtde_pivos} pivô{r.qtde_pivos === 1 ? '' : 's'} &middot; {numero(r.area_total_ha, 1)} ha &middot; {brl(r.valor_total)} negociado &middot; {brl(r.custo_por_hectare_medio)}/ha
+        </p>
       </div>
 
       <ResumoComercial projeto={p} pivos={dados.pivos} resumo={r} />
@@ -913,7 +914,8 @@ function Dashboard(props) {
 
       <div className="panel">
         <h2>Projetos ({projetos.length}) &middot; <span className="muted">escopo: {escopo || '-'}</span></h2>
-        <p className="muted" style={{ margin: '-6px 0 10px' }}>Clique em um cliente ou em "Abrir" para ver a análise comercial (dashboard por negociação) daquele projeto, com todos os seus pivôs.</p>
+        <p className="muted" style={{ margin: '-6px 0 10px' }}>Clique em um projeto para ver a análise comercial (dashboard por negociação), com todos os seus pivôs.</p>
+        <div style={{ overflowX: 'auto' }}>
         <table>
           <thead>
             <tr><th>Cliente</th><th>Local</th><th>Vendedor</th><th>Status</th><th>Ações</th></tr>
@@ -922,14 +924,14 @@ function Dashboard(props) {
             {projetos.map(function (p) {
               return (
                 <tr key={p.id} className="clicavel" onClick={function () { props.onAbrirProjeto(p.id); }}>
-                  <td><span style={{ color: 'var(--vermelho)', fontWeight: 600, textDecoration: 'underline' }}>{p.cliente}</span></td>
+                  <td style={{ fontWeight: 600 }}>{p.cliente}</td>
                   <td>{p.municipio ? p.municipio + '/' : ''}{p.estado || '-'}</td>
                   <td>{p.vendedor_nome || '-'}</td>
-                  <td><span className={'tag ' + p.status}>{p.status}</span></td>
+                  <td><span className={'tag ' + p.status}>{formatarStatus(p.status)}</span></td>
                   <td>
                     <div className="row" style={{ flexWrap: 'nowrap' }}>
                       <button className="mini ghost" title="Abrir análise comercial deste projeto" onClick={function (ev) { ev.stopPropagation(); props.onAbrirProjeto(p.id); }}>
-                        Abrir &rarr;
+                        Abrir
                       </button>
                       <BotaoUploadRapido projeto={p} token={props.token} onChange={carregar} />
                       {props.usuario.nivel === 'diretor' ? <BotaoExcluirProjeto projetoId={p.id} nomeCliente={p.cliente} token={props.token} onExcluido={carregar} /> : null}
@@ -941,6 +943,7 @@ function Dashboard(props) {
             {projetos.length === 0 ? <tr><td colSpan={5} className="muted">Nenhum projeto no seu escopo.</td></tr> : null}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );
@@ -1125,7 +1128,18 @@ function App() {
   const [tela, setTela] = useState('dashboard');
   const [qtdePendentes, setQtdePendentes] = useState(0);
   const [projetoAberto, setProjetoAberto] = useState(null);
+  const [projetoAtual, setProjetoAtual] = useState(null);
   const [dashboardKey, setDashboardKey] = useState(0);
+
+  function abrirProjeto(id) {
+    setProjetoAtual(null);
+    setProjetoAberto(id);
+  }
+  function fecharProjeto() {
+    setProjetoAberto(null);
+    setProjetoAtual(null);
+    setDashboardKey(function (k) { return k + 1; });
+  }
 
   useEffect(function () {
     const t = localStorage.getItem('pivot_token');
@@ -1173,16 +1187,16 @@ function App() {
         <NovoProjeto
           token={token}
           onChange={function () { setDashboardKey(function (k) { return k + 1; }); }}
-          onAbrir={function (id) { setProjetoAberto(id); setTela('dashboard'); }}
+          onAbrir={function (id) { abrirProjeto(id); setTela('dashboard'); }}
         />
 
         <nav className="secao">
           <p className="titulo">Acompanhar</p>
-          <button className={(tela === 'dashboard' && !projetoAberto) ? 'ativo' : ''} onClick={function () { irPara('dashboard'); }}>
+          <button className={(tela === 'dashboard' && !projetoAberto) ? 'ativo' : ''} onClick={function () { setProjetoAtual(null); irPara('dashboard'); }}>
             <span>🏠</span> Dashboard geral
           </button>
           {podeReceberArquivo ? (
-            <button className={(tela === 'pendentes' && !projetoAberto) ? 'ativo' : ''} onClick={function () { irPara('pendentes'); }}>
+            <button className={(tela === 'pendentes' && !projetoAberto) ? 'ativo' : ''} onClick={function () { setProjetoAtual(null); irPara('pendentes'); }}>
               <span>📥</span> Pendentes
               {qtdePendentes > 0 ? <span className="badge-inline">{qtdePendentes}</span> : null}
             </button>
@@ -1192,8 +1206,17 @@ function App() {
         {podeAdmin ? (
           <nav className="secao">
             <p className="titulo">Organizar</p>
-            <button className={(tela === 'admin' && !projetoAberto) ? 'ativo' : ''} onClick={function () { irPara('admin'); }}>
+            <button className={(tela === 'admin' && !projetoAberto) ? 'ativo' : ''} onClick={function () { setProjetoAtual(null); irPara('admin'); }}>
               <span>⚙️</span> Usuários &amp; fiscal
+            </button>
+          </nav>
+        ) : null}
+
+        {projetoAberto ? (
+          <nav className="secao">
+            <p className="titulo">Negociação aberta</p>
+            <button className="ativo">
+              <span>📊</span> {projetoAtual ? projetoAtual.cliente : 'Carregando...'}
             </button>
           </nav>
         ) : null}
@@ -1215,7 +1238,8 @@ function App() {
               projetoId={projetoAberto}
               token={token}
               usuario={usuario}
-              onVoltar={function () { setProjetoAberto(null); setDashboardKey(function (k) { return k + 1; }); }}
+              onVoltar={fecharProjeto}
+              onCarregado={setProjetoAtual}
             />
           ) : (
             <React.Fragment>
