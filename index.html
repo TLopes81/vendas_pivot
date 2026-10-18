@@ -1582,6 +1582,26 @@ function ParametrosComerciaisProjeto(props) {
         {campoComercial('montagem', 'Montagem (total da negociação)', CampoMonetario)}
         {campoComercial('servicos_adicionais', 'Serv. Adicionais (total da negociação)', CampoMonetario)}
       </div>
+      {props.resumo ? (function () {
+        const valorTotal = props.resumo.valor_total || 0;
+        const parcelas = props.parcelas || [];
+        const pctParcelado = parcelas
+          .filter(function (pg) { return pg.pagamento === 'Parcelado'; })
+          .reduce(function (acc, pg) { return acc + Number(pg.porcentagem || 0); }, 0);
+        const valorParcelado = valorTotal * (pctParcelado / 100);
+        return (
+          <div className="kpis" style={{ marginTop: '16px', marginBottom: 0 }}>
+            <div className="kpi">
+              <span>Valor total negociado</span>
+              <strong>{brl(valorTotal)}</strong>
+            </div>
+            <div className="kpi">
+              <span>Valor parcelado</span>
+              <strong>{brl(valorParcelado)}</strong>
+            </div>
+          </div>
+        );
+      })() : null}
     </div>
   );
 }
@@ -1637,7 +1657,7 @@ function ProjetoDetalhe(props) {
       ) : null}
 
       {secao === 'parametros' ? (
-        <ParametrosComerciaisProjeto token={props.token} projeto={p} podeEditar={podeEditar} onChange={carregar} />
+        <ParametrosComerciaisProjeto token={props.token} projeto={p} resumo={r} parcelas={dados.parcelas} podeEditar={podeEditar} onChange={carregar} />
       ) : null}
 
       {secao === 'itens' ? (
