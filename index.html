@@ -906,12 +906,15 @@ function Dashboard(props) {
             {projetos.map(function (p) {
               return (
                 <tr key={p.id} className="clicavel" onClick={function () { props.onAbrirProjeto(p.id); }}>
-                  <td>{p.cliente}</td>
+                  <td><span style={{ color: 'var(--azul2)', fontWeight: 600, textDecoration: 'underline' }}>{p.cliente}</span></td>
                   <td>{p.municipio ? p.municipio + '/' : ''}{p.estado || '-'}</td>
                   <td>{p.vendedor_nome || '-'}</td>
                   <td><span className={'tag ' + p.status}>{p.status}</span></td>
                   <td>
                     <div className="row" style={{ flexWrap: 'nowrap' }}>
+                      <button className="mini ghost" title="Abrir análise comercial deste projeto" onClick={function (ev) { ev.stopPropagation(); props.onAbrirProjeto(p.id); }}>
+                        Abrir &rarr;
+                      </button>
                       <BotaoUploadRapido projeto={p} token={props.token} onChange={carregar} />
                       {props.usuario.nivel === 'diretor' ? <BotaoExcluirProjeto projetoId={p.id} nomeCliente={p.cliente} token={props.token} onExcluido={carregar} /> : null}
                     </div>
