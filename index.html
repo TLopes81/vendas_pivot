@@ -166,7 +166,7 @@ const API = '';
 // verdade (F5/Ctrl+Shift+R), nunca so navegando dentro do app. Isso aqui e
 // o jeito de confirmar se uma tela esta mesmo na ultima versao publicada
 // antes de reportar algo como bug -- bump a cada deploy.
-const VERSAO_APP = '2026-10-18.11';
+const VERSAO_APP = '2026-10-18.12';
 
 function api(path, options, token) {
   const opts = options || {};
@@ -2010,13 +2010,11 @@ function Dashboard(props) {
 
   return (
     <div>
-      <h2 style={{ margin: '0 0 16px' }}>Dashboard geral &middot; <span className="muted" style={{ fontWeight: 400, fontSize: '13px' }}>{escopo || 'todas as negociações no seu escopo'}</span></h2>
-
       <div className="panel resumo-mestre">
         <p className="resumo-mestre-trilha">NEGOCIANDO &middot; GANHOS &middot; PERDIDOS</p>
         <h2 className="resumo-mestre-titulo">{brl(valorStatus('negociando'))} em negociação &middot; {brl(valorStatus('concluido_ganho'))} ganho</h2>
         <p className="muted" style={{ margin: 0 }}>
-          {kpis.total} projeto{kpis.total === 1 ? '' : 's'} &middot; {kpis.qtde_pivos} pivô{kpis.qtde_pivos === 1 ? '' : 's'} &middot; {numero(kpis.area_total_ha, 1)} ha &middot; Custo/ha médio {brl(kpis.custo_por_hectare_medio)}
+          {escopo || 'seu escopo'} &middot; {kpis.total} projeto{kpis.total === 1 ? '' : 's'} &middot; {kpis.qtde_pivos} pivô{kpis.qtde_pivos === 1 ? '' : 's'} &middot; {numero(kpis.area_total_ha, 1)} ha &middot; Custo/ha médio {brl(kpis.custo_por_hectare_medio)}
         </p>
 
         <div className="resumo-mestre-divisor" />
@@ -2111,7 +2109,7 @@ function Projetos(props) {
     <div>
       {erro ? <div className="err">{erro}</div> : null}
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
-        <h2 style={{ margin: 0 }}>Projetos &middot; <span className="muted" style={{ fontWeight: 400, fontSize: '13px' }}>escopo: {escopo || '-'}</span></h2>
+        <p className="muted" style={{ margin: 0 }}>Escopo: {escopo || '-'}</p>
         <NovoProjeto token={props.token} onChange={carregar} onAbrir={props.onAbrirProjeto} />
       </div>
 
@@ -2222,7 +2220,6 @@ function Pendentes(props) {
 
   return (
     <div>
-      <h2 style={{ margin: '0 0 4px' }}>Pendências</h2>
       <p className="muted" style={{ margin: '0 0 16px' }}>Resolva os arquivos aguardando seu aceite, um de cada vez.</p>
       {erro ? <div className="err">{erro}</div> : null}
       {!SUPORTA_PASTA_LOCAL ? <p className="muted" style={{ marginBottom: '12px' }}>Este navegador não organiza a pasta local automaticamente (use Chrome/Edge) -- aceitar ainda marca o arquivo como aprovado.</p> : null}
